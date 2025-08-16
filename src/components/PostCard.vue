@@ -3,12 +3,14 @@ import { ref, computed } from 'vue';
 import { ArrowUp, ArrowDown, MessageCircle, MoreHorizontal, Trash2 } from 'lucide-vue-next';
 import { db, auth } from '../firebase/config';
 import { doc, updateDoc, increment, arrayUnion, arrayRemove, deleteDoc } from 'firebase/firestore';
+import { useRouter } from 'vue-router';
 import { type Post } from '../types';
 
 const props = defineProps<{ post: Post }>();
 
 const isMenuOpen = ref(false);
 const currentUser = auth.currentUser;
+const router = useRouter();
 
 const toggleMenu = () => { isMenuOpen.value = !isMenuOpen.value; };
 
@@ -61,6 +63,11 @@ const vote = async (voteType: 'up' | 'down') => {
     }
   }
 };
+
+const goToComments = () => {
+  // Ho cambiato il nome della rotta da 'PostComments' a 'PostView'
+  router.push({ name: 'PostView', params: { postId: props.post.id } });
+};
 </script>
 
 <template>
@@ -98,7 +105,7 @@ const vote = async (voteType: 'up' | 'down') => {
           @click="vote('down')" 
         />
       </div>
-      <div class="comments">
+      <div class="comments" @click="goToComments">
         <MessageCircle :size="20" class="icon" />
         <span>{{ post.commentsCount }}</span>
       </div>
