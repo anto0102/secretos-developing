@@ -1,0 +1,38 @@
+<script setup lang="ts">
+import { defineProps, defineEmits } from 'vue';
+import CommentItem from './CommentItem.vue';
+
+const props = defineProps<{ 
+  replies?: any[],
+  areVisible: boolean
+}>();
+
+defineEmits(['vote-comment', 'delete-comment', 'submit-reply']);
+</script>
+
+<template>
+  <div v-if="replies && replies.length > 0" class="replies-container">
+    <div v-if="areVisible" class="replies-list">
+      <CommentItem
+        v-for="reply in replies"
+        :key="reply.id"
+        :comment="reply"
+        @vote-comment="(payload) => $emit('vote-comment', payload)"
+        @delete-comment="(commentId) => $emit('delete-comment', commentId)"
+        @submit-reply="(payload) => $emit('submit-reply', payload)"
+      />
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.replies-container {
+  position: relative;
+  margin-left: 20px;
+  padding-left: 24px;
+  border-left: 2px solid #363636;
+}
+.replies-list {
+  padding-top: 1rem;
+}
+</style>

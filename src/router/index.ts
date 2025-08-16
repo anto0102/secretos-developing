@@ -1,7 +1,8 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import HomeView from '../views/HomeView.vue'
-import SettingsView from '../views/SettingsView.vue'
-import PostView from '../views/PostView.vue' // <-- Importiamo la nuova vista
+import { createRouter, createWebHistory } from 'vue-router';
+import { auth } from '../firebase/config';
+import HomeView from '../views/HomeView.vue';
+import SettingsView from '../views/SettingsView.vue';
+import PostView from '../views/PostView.vue';
 
 const routes = [
   { path: '/', name: 'Home', component: HomeView },
@@ -9,19 +10,31 @@ const routes = [
   { path: '/create', name: 'CreatePost', component: () => import('../views/CreatePostView.vue') },
   { path: '/search', name: 'Search', component: () => import('../views/SearchView.vue') },
   { path: '/notifications', name: 'Notifications', component: () => import('../views/NotificationsView.vue') },
-  { path: '/profile', name: 'Profile', component: () => import('../views/ProfileView.vue') },
+  { 
+    path: '/profile/:userId', 
+    name: 'Profile', 
+    component: () => import('../views/ProfileView.vue'),
+    props: true 
+  },
+  {
+    path: '/profile',
+    redirect: () => {
+      if (!auth.currentUser) return { name: 'Login' };
+      return { path: `/profile/${auth.currentUser.uid}` };
+    }
+  },
   { path: '/settings', name: 'Settings', component: SettingsView },
   { 
-    path: '/post/:postId', // <-- Il percorso rimane dinamico
-    name: 'PostView',      // <-- Aggiorniamo il nome della rotta
-    component: PostView,   // <-- Colleghiamo il componente corretto
+    path: '/post/:postId',
+    name: 'PostView',
+    component: PostView,
     props: true
   },
-]
+];
 
 const router = createRouter({
   history: createWebHistory(),
   routes
-})
+});
 
-export default router
+export default router;

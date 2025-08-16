@@ -13,21 +13,16 @@ const password = ref('');
 const username = ref('');
 const errorMsg = ref('');
 
-// --- 1. VARIABILE DI STATO PER GESTIRE LA MODALITÀ ---
-// Inizia in modalità 'login' (false)
 const isRegisterMode = ref(false);
 
-// Funzione per cambiare modalità
 const toggleMode = () => {
   isRegisterMode.value = !isRegisterMode.value;
-  // Pulisce i campi e i messaggi di errore quando si cambia modalità
   email.value = '';
   password.value = '';
   username.value = '';
   errorMsg.value = '';
 };
 
-// La funzione di login rimane la stessa
 const login = async () => {
   try {
     await signInWithEmailAndPassword(auth, email.value, password.value);
@@ -39,7 +34,6 @@ const login = async () => {
   }
 };
 
-// La funzione di registrazione rimane la stessa
 const register = async () => {
   if (username.value.trim() === '' || email.value.trim() === '' || password.value.trim() === '') {
     errorMsg.value = "Tutti i campi sono obbligatori.";
@@ -56,11 +50,16 @@ const register = async () => {
     }
     const userCredential = await createUserWithEmailAndPassword(auth, email.value, password.value);
     const user = userCredential.user;
+
+    // --- MODIFICA QUI ---
+    // Aggiungiamo il campo 'avatarUrl' con un link a un'immagine predefinita.
     await setDoc(doc(db, "users", user.uid), {
       username: username.value,
       email: user.email,
-      createdAt: new Date()
+      createdAt: new Date(),
+      avatarUrl: 'https://static.vecteezy.com/system/resources/thumbnails/009/292/244/small/default-avatar-icon-of-social-media-user-vector.jpg'
     });
+
     router.push('/');
   } catch (error: any) {
     if (error.code === 'auth/email-already-in-use') {
@@ -72,7 +71,6 @@ const register = async () => {
   }
 };
 
-// --- 2. UN'UNICA FUNZIONE CHE DECIDE COSA FARE ---
 const handleSubmit = () => {
   if (isRegisterMode.value) {
     register();
@@ -122,8 +120,7 @@ const handleSubmit = () => {
 </template>
 
 <style scoped>
-/* Aggiungiamo solo gli stili per il nuovo link di toggle */
-.login-container { display: flex; justify-content: center; align-items: center; height: 100%; padding: 2rem; }
+.login-container { display: flex; justify-content: center; align-items: center; min-height: 80vh; padding: 2rem; }
 .login-box { width: 100%; max-width: 400px; padding: 2rem; background-color: #2a2a2a; border-radius: 8px; border: 1px solid #363636; }
 h2 { text-align: center; margin-bottom: 1.5rem; }
 .input-group { margin-bottom: 1rem; }

@@ -3,7 +3,7 @@ import { ref, watch, onUnmounted } from 'vue';
 import PostCard from '../components/PostCard.vue';
 import FilterTabs from '../components/FilterTabs.vue';
 import { db } from '../firebase/config';
-import { collection, query, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, onSnapshot, orderBy, doc, getDoc } from 'firebase/firestore';
 import { type Post } from '../types';
 
 const posts = ref<Post[]>([]);
@@ -13,45 +13,33 @@ let unsubscribe: () => void;
 
 watch(activeFilter, (newFilter) => {
   isLoading.value = true;
-  
   if (unsubscribe) unsubscribe();
-
   const orderByField = newFilter === 'viral' ? 'score' : 'createdAt';
-  
   const q = query(collection(db, "posts"), orderBy(orderByField, "desc"));
-
-  unsubscribe = onSnapshot(q, (querySnapshot) => {
-    posts.value = querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      // **LA CORREZIONE È QUI:** Questo assicura che anche i vecchi post
-      // senza i nuovi campi funzionino correttamente con il nostro PostCard aggiornato.
-      return {
-        id: doc.id,
-        ...data,
-        upvotedBy: data.upvotedBy || [], // Usa l'array esistente o ne crea uno vuoto
-        downvotedBy: data.downvotedBy || [] // Usa l'array esistente o ne crea uno vuoto
-      } as Post;
-    });
-    isLoading.value = false;
-  }, (error) => {
-    console.error("Errore nel recuperare i post:", error);
+  unsubscribe = onSnapshot(q, async (querySnapshot) => {
+    const postsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Post));
+    const authorIds = [...new Set(postsData.map(post => post.authorId).filter(Boolean))];
+    if (authorIds.length > 0) {
+        const userDocs = await Promise.all(authorIds.map(id => getDoc(doc(db, "users", id))));
+        const avatarMap = new Map();
+        userDocs.forEach(userDoc => {
+            if (userDoc.exists()) avatarMap.set(userDoc.id, userDoc.data().avatarUrl);
+        });
+        posts.value = postsData.map(post => ({ ...post, authorAvatarUrl: avatarMap.get(post.authorId) || '' }));
+    } else {
+        posts.value = postsData;
+    }
     isLoading.value = false;
   });
 }, { immediate: true });
 
-onUnmounted(() => {
-  if (unsubscribe) unsubscribe();
-});
-
-const handleSetFilter = (filter: 'viral' | 'new') => {
-  activeFilter.value = filter;
-};
+onUnmounted(() => { if (unsubscribe) unsubscribe(); });
 </script>
 
 <template>
   <div class="feed-container">
-    <FilterTabs :active-filter="activeFilter" @set-filter="handleSetFilter" />
-    <div v-if="isLoading" class="loading">Caricamento dei post...</div>
+    <FilterTabs :active-filter="activeFilter" @set-filter="(filter) => activeFilter = filter" />
+    <div v-if="isLoading" class="loading">Caricamento...</div>
     <div v-else class="post-list">
       <div v-if="posts.length === 0" class="loading">Nessun post da mostrare.</div>
       <PostCard v-for="post in posts" :key="post.id" :post="post" />

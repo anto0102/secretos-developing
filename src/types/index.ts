@@ -6,6 +6,7 @@ export interface Post {
   score: number;
   commentsCount: number;
   createdAt?: any;
-  upvotedBy: string[];   // <-- AGGIUNGI QUESTA RIGA
-  downvotedBy: string[]; // <-- E QUESTA RIGA
+  upvotedBy: string[];
+  downvotedBy: string[];
+  authorAvatarUrl?: string; // <-- QUESTA RIGA È FONDAMENTALE
 }
