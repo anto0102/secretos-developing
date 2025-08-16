@@ -27,7 +27,7 @@ const router = useRouter();
           <Loader :size="40" class="spinner" />
         </div>
       </div>
-      <h1 class="username">{{ userProfile?.username }}</h1>
+      <h1 class="username premium-username">{{ userProfile?.username }}</h1>
     </div>
     <div class="nav-buttons-container">
       <button @click="emit('update:activeTab', 'about')" :class="{ active: activeTab === 'about' }">
@@ -50,11 +50,17 @@ const router = useRouter();
 </template>
 
 <style scoped>
-/* Gli stili rimangono invariati, non è necessario copiarli se non li hai modificati */
+/* Gli stili rimangono invariati, non è necessario copiarli se non li hai modificato */
 .user-info-container { display: flex; justify-content: space-between; align-items: center; padding: 0 1rem; }
 .profile-info-content { display: flex; align-items: center; gap: 1.5rem; }
 .avatar-container { width: 130px; height: 130px; border-radius: 50%; border: 4px solid #1a1a1a; background-color: #1a1a1a; overflow: hidden; position: relative; }
-.username { font-size: 2.25rem; font-weight: 700; color: #d1d5db; margin: 0; }
+.username { font-size: 2.25rem; font-weight: 700; margin: 0; }
+.premium-username {
+  background: linear-gradient(to right, #bdbdbd, #e0e0e0, #bdbdbd);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
 .nav-buttons-container { display: flex; gap: 0.5rem; }
 .nav-buttons-container button { background-color: #2a2a2a; color: #a0a0a0; border: none; padding: 0.75rem 1.25rem; border-radius: 999px; font-weight: bold; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; gap: 0.5rem; }
 .nav-buttons-container button:hover { background-color: #3a3a3a; color: #fff; }

@@ -1,26 +1,31 @@
-<script setup lang="ts">
-import { defineProps, defineEmits, ref, computed } from 'vue';
-import { ArrowUp, ArrowDown, MessageCircle, MoreHorizontal, Trash2, CheckCircle, Eye, X } from 'lucide-vue-next';
++<script setup lang="ts">
+import { defineProps, defineEmits, ref, computed, watch } from 'vue';
+import { ArrowUp, ArrowDown, MessageCircle, MoreHorizontal, Trash2, CheckCircle, Eye, X, Pencil } from 'lucide-vue-next';
 import { type Post } from '../types';
 import { auth, db } from '../firebase/config';
-import { doc, getDoc, updateDoc, arrayRemove, arrayUnion, increment } from 'firebase/firestore';
-
-// Importa il componente PostHeader per la coerenza del design
+import { doc, getDoc, updateDoc, arrayRemove, arrayUnion, increment, Timestamp } from 'firebase/firestore';
 import PostHeader from './PostHeader.vue';
+import PostMedia from './PostMedia.vue';
+import PostFooter from './PostFooter.vue';
+import { formatTimeAgo } from '../utils/dateUtils';
+import { useRouter } from 'vue-router';
 
 const props = defineProps<{ post: Post }>();
-const emit = defineEmits(['vote', 'delete-post']);
+const emit = defineEmits(['delete-post']);
+const router = useRouter();
 
-const isMenuOpen = ref(false);
-const showMedia = ref(false);
+const isEditing = ref(false);
+const editedText = ref(props.post.text);
 const isVotersModalOpen = ref(false);
 const votersList = ref<{ optionText: string, users: {id: string, username: string, avatarUrl: string}[] }[]>([]);
 
-const isOwner = computed(() => auth.currentUser?.uid === props.post?.authorId);
-const isUpvoted = computed(() => auth.currentUser && props.post.upvotedBy?.includes(auth.currentUser.uid));
-const isDownvoted = computed(() => auth.currentUser && props.post.downvotedBy?.includes(auth.currentUser.uid));
+watch(() => props.post.text, (newText) => {
+    if (!isEditing.value) {
+        editedText.value = newText;
+    }
+});
 
-const toggleMenu = () => { isMenuOpen.value = !isMenuOpen.value; };
+const isOwner = computed(() => auth.currentUser?.uid === props.post.authorId);
 
 const parseMarkdown = (text: string) => {
     text = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
@@ -126,6 +131,55 @@ const showVoters = async () => {
   }));
 };
 
+const handleEditClick = () => {
+  isEditing.value = true;
+  editedText.value = props.post.text;
+};
+
+const handleSaveClick = async () => {
+  if (editedText.value.trim() === props.post.text) {
+    isEditing.value = false;
+    return;
+  }
+  try {
+    const postRef = doc(db, 'posts', props.post.id);
+    await updateDoc(postRef, {
+      text: editedText.value.trim(),
+      isEdited: true,
+      editedAt: Timestamp.now(),
+    });
+    isEditing.value = false;
+  } catch (error) {
+    console.error('Errore durante la modifica del post:', error);
+  }
+};
+
+const handleCancelClick = () => {
+  editedText.value = props.post.text;
+  isEditing.value = false;
+};
+
+const handleVote = async (voteType: 'up' | 'down') => {
+  if (!auth.currentUser) return;
+  const postRef = doc(db, "posts", props.post.id);
+  const userId = auth.currentUser.uid;
+  const isUpvoted = props.post.upvotedBy?.includes(userId);
+  const isDownvoted = props.post.downvotedBy?.includes(userId);
+
+  if (voteType === 'up') {
+    if (isUpvoted) {
+      await updateDoc(postRef, { upvotedBy: arrayRemove(userId), score: increment(-1) });
+    } else {
+      await updateDoc(postRef, { upvotedBy: arrayUnion(userId), downvotedBy: arrayRemove(userId), score: increment(isDownvoted ? 2 : 1) });
+    }
+  } else {
+    if (isDownvoted) {
+      await updateDoc(postRef, { downvotedBy: arrayRemove(userId), score: increment(1) });
+    } else {
+      await updateDoc(postRef, { downvotedBy: arrayUnion(userId), upvotedBy: arrayRemove(userId), score: increment(isUpvoted ? -2 : -1) });
+    }
+  }
+};
 </script>
 
 <template>
@@ -137,16 +191,27 @@ const showVoters = async () => {
       :is-anonymous="post.isAnonymous"
       :post-id="post.id"
       @delete-post="emit('delete-post')"
+      @edit-post="handleEditClick"
     />
     
-    <p class="card-text" v-html="parseMarkdown(post.text)"></p>
+    <div v-if="!isEditing">
+      <p class="card-text" v-html="parseMarkdown(post.text)"></p>
+    </div>
+    <div v-else>
+      <textarea v-model="editedText" class="edit-textarea"></textarea>
+      <div class="edit-actions">
+        <button @click="handleCancelClick" class="cancel-btn">Annulla</button>
+        <button @click="handleSaveClick" class="save-btn">Salva</button>
+      </div>
+    </div>
     
     <div v-if="post.mediaUrl" class="media-container">
-        <div v-if="post.isMediaSpoiler && !showMedia" class="spoiler-overlay-media" @click.stop="showMedia = true">
-            <span>Clicca per mostrare il media</span>
-        </div>
-        <img v-if="post.mediaType === 'image'" :src="post.mediaUrl" class="post-media" alt="Immagine del post" :class="{ 'is-spoiler': post.isMediaSpoiler && !showMedia }"/>
-        <video v-else-if="post.mediaType === 'video'" :src="post.mediaUrl" controls class="post-media" :class="{ 'is-spoiler': post.isMediaSpoiler && !showMedia }"></video>
+        <PostMedia 
+            :media-url="post.mediaUrl" 
+            :media-type="post.mediaType" 
+            :is-media-spoiler="post.isMediaSpoiler"
+            :post-id="post.id"
+        />
     </div>
 
     <div v-if="post.isPoll && post.pollOptions" class="poll-container">
@@ -181,15 +246,15 @@ const showVoters = async () => {
         <ArrowUp 
           :size="22" 
           class="icon vote-icon" 
-          :class="{ 'upvoted': isUpvoted }"
-          @click="emit('vote', 'up')" 
+          :class="{ 'upvoted': post.upvotedBy?.includes(auth.currentUser?.uid) }"
+          @click="handleVote('up')" 
         />
         <span class="score">{{ post.score }} punti</span>
         <ArrowDown 
           :size="22" 
           class="icon vote-icon" 
-          :class="{ 'downvoted': isDownvoted }"
-          @click="emit('vote', 'down')" 
+          :class="{ 'downvoted': post.downvotedBy?.includes(auth.currentUser?.uid) }"
+          @click="handleVote('down')" 
         />
       </div>
       <div class="comments-count">
@@ -216,6 +281,10 @@ const showVoters = async () => {
         </div>
       </div>
     </transition>
+    <div class="post-meta">
+      <span v-if="post.isEdited" class="edited-label">modificato {{ formatTimeAgo(post.editedAt) }}</span>
+      <span v-else class="created-label">{{ formatTimeAgo(post.createdAt) }}</span>
+    </div>
   </div>
 </template>
 
@@ -224,9 +293,6 @@ const showVoters = async () => {
   background-color: #2a2a2a; border-radius: 12px; padding: 1.5rem;
   margin-bottom: 2rem; border: 1px solid #363636;
 }
-
-/* Rimosso l'header duplicato */
-
 .card-text { 
   color: #e0e0e0; line-height: 1.6; font-size: 1rem; 
   white-space: pre-wrap; margin-top: 1rem; word-wrap: break-word; 
@@ -250,7 +316,6 @@ const showVoters = async () => {
   margin-top: 1.5rem;
   color: #a0a0a0;
 }
-
 .menu-container { position: relative; }
 .dropdown-menu {
   position: absolute; top: 100%; right: 0; background-color: #363636;
@@ -266,7 +331,6 @@ const showVoters = async () => {
 .fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease, transform 0.2s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(-10px); }
 
-/* Stili per media e sondaggi */
 .media-container { position: relative; width: 100%; max-width: 100%; margin-top: 1rem; border-radius: 8px; overflow: hidden; line-height: 0; display: block; }
 .post-media { width: 100%; height: auto; max-height: 500px; border-radius: 8px; display: block; }
 .post-media.is-spoiler { filter: blur(15px); transition: filter 0.3s ease; }
@@ -300,4 +364,47 @@ const showVoters = async () => {
 .voter-item { display: flex; align-items: center; gap: 0.75rem; background-color: #1f1f1f; padding: 0.5rem; border-radius: 6px; }
 .voter-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
 .no-votes { font-size: 0.9rem; color: #a0a0a0; text-align: center; }
+
+.post-meta {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+  color: #a0a0a0;
+  font-style: italic;
+}
+.edit-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background-color: #1a1a1a;
+  color: #fff;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 0.75rem;
+  margin-top: 1rem;
+  resize: vertical;
+  min-height: 100px;
+}
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.cancel-btn, .save-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+}
+.cancel-btn {
+  background-color: #3a3a3a;
+  color: #a0a0a0;
+}
+.save-btn {
+  background-color: #4CAF50;
+  color: #fff;
+}
 </style>

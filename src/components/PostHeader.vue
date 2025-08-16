@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { MoreHorizontal, Trash2 } from 'lucide-vue-next';
+import { MoreHorizontal, Trash2, Pencil } from 'lucide-vue-next';
 import { auth } from '../firebase/config';
 
 const props = defineProps<{
@@ -12,7 +12,7 @@ const props = defineProps<{
   postId: string;
 }>();
 
-const emit = defineEmits(['delete-post']);
+const emit = defineEmits(['delete-post', 'edit-post']);
 
 const router = useRouter();
 const isMenuOpen = ref(false);
@@ -39,7 +39,10 @@ const toggleMenu = () => {
       <MoreHorizontal :size="20" class="icon" @click.stop="toggleMenu" />
       <transition name="fade">
         <div v-if="isMenuOpen" class="dropdown-menu" @mouseleave="isMenuOpen = false">
-          <button @click="emit('delete-post')" class="menu-item">
+          <button @click="emit('edit-post')" class="menu-item edit-item">
+            <Pencil :size="16" /><span>Modifica</span>
+          </button>
+          <button @click="emit('delete-post')" class="menu-item delete-item">
             <Trash2 :size="16" /><span>Elimina</span>
           </button>
         </div>
@@ -98,7 +101,6 @@ const toggleMenu = () => {
   gap: 0.75rem;
   background: none;
   border: none;
-  color: #ef4444;
   padding: 0.5rem;
   width: 100%;
   text-align: left;
@@ -109,6 +111,12 @@ const toggleMenu = () => {
 }
 .menu-item:hover {
   background-color: #4b5563;
+}
+.edit-item {
+  color: #fff;
+}
+.delete-item {
+  color: #ef4444;
 }
 .fade-enter-active,
 .fade-leave-active {

@@ -7,7 +7,7 @@ const props = defineProps({
   userProfile: Object,
   isUploading: String,
   activeTab: String,
-  isOwner: Boolean, // Aggiungiamo la prop in ricezione
+  isOwner: Boolean,
 });
 
 const emit = defineEmits(['triggerFileUpload', 'update:activeTab']);

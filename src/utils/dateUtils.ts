@@ -1,5 +1,3 @@
-// src/utils/dateUtils.ts
-
 import { Timestamp } from 'firebase/firestore';
 
 export function formatTimeAgo(timestamp: Timestamp | Date | null | undefined): string {
@@ -8,7 +6,6 @@ export function formatTimeAgo(timestamp: Timestamp | Date | null | undefined): s
   }
 
   let date: Date;
-  // Controlla se l'oggetto è un Timestamp di Firebase
   if ('toDate' in timestamp && typeof timestamp.toDate === 'function') {
     date = timestamp.toDate();
   } else {
@@ -20,23 +17,29 @@ export function formatTimeAgo(timestamp: Timestamp | Date | null | undefined): s
 
   let interval = seconds / 31536000;
   if (interval > 1) {
-    return Math.floor(interval) + " anni fa";
+    const value = Math.floor(interval);
+    return value + (value === 1 ? " anno fa" : " anni fa");
   }
   interval = seconds / 2592000;
   if (interval > 1) {
-    return Math.floor(interval) + " mesi fa";
+    const value = Math.floor(interval);
+    return value + (value === 1 ? " mese fa" : " mesi fa");
   }
   interval = seconds / 86400;
   if (interval > 1) {
-    return Math.floor(interval) + " giorni fa";
+    const value = Math.floor(interval);
+    return value + (value === 1 ? " giorno fa" : " giorni fa");
   }
   interval = seconds / 3600;
   if (interval > 1) {
-    return Math.floor(interval) + " ore fa";
+    const value = Math.floor(interval);
+    return value + (value === 1 ? " ora fa" : " ore fa");
   }
   interval = seconds / 60;
   if (interval > 1) {
-    return Math.floor(interval) + " minuti fa";
+    const value = Math.floor(interval);
+    return value + (value === 1 ? " minuto fa" : " minuti fa");
   }
-  return Math.floor(seconds) + " secondi fa";
+  const value = Math.floor(seconds);
+  return value + (value === 1 ? " secondo fa" : " secondi fa");
 }

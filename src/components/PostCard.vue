@@ -5,11 +5,10 @@ import { doc, deleteDoc, updateDoc, arrayRemove, arrayUnion, increment, getDoc }
 import { useRouter } from 'vue-router';
 import { X } from 'lucide-vue-next';
 import { type Post } from '../types';
-
-// Importa i nuovi componenti
 import PostHeader from './PostHeader.vue';
 import PostMedia from './PostMedia.vue';
 import PostFooter from './PostFooter.vue';
+import { formatTimeAgo } from '../utils/dateUtils';
 
 const props = defineProps<{ post: Post }>();
 const router = useRouter();
@@ -228,6 +227,11 @@ const showVoters = async () => {
       </div>
     </transition>
 
+    <div class="post-meta">
+      <span v-if="post.isEdited" class="edited-label">modificato {{ formatTimeAgo(post.editedAt) }}</span>
+      <span v-else class="created-label">{{ formatTimeAgo(post.createdAt) }}</span>
+    </div>
+
   </div>
 </template>
 
@@ -439,4 +443,15 @@ const showVoters = async () => {
 }
 .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+.post-meta {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: flex-end;
+  font-size: 0.8rem;
+  color: #a0a0a0;
+  font-style: italic;
+}
+.edited-label {
+  margin-left: 0.5rem;
+}
 </style>
