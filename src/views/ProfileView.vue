@@ -9,6 +9,10 @@ import PostCard from '../components/PostCard.vue';
 import { type Post } from '../types';
 import { Loader, ArrowRight } from 'lucide-vue-next';
 import { formatTimeAgo } from '../utils/dateUtils';
+import { uploadBytes, getDownloadURL, ref as storageRef } from 'firebase/storage';
+import { storage } from '../firebase/config';
+import UploadSuccessModal from '../components/UploadSuccessModal.vue';
+import SettingsMenu from '../components/SettingsMenu.vue';
 
 const props = defineProps<{ userId: string }>();
 const router = useRouter();
@@ -29,6 +33,51 @@ let observer: IntersectionObserver;
 
 const editingSection = ref<string | null>(null);
 const editableData = ref<any>({});
+
+const isUploading = ref<string | null>(null);
+const avatarInputRef = ref<HTMLInputElement | null>(null);
+const bannerInputRef = ref<HTMLInputElement | null>(null);
+const showSuccessModal = ref(false);
+const isSettingsMenuOpen = ref(false);
+
+const triggerFileUpload = (type: 'avatar' | 'banner') => {
+  if (!isOwner.value || isUploading.value) return;
+  if (type === 'avatar' && avatarInputRef.value) {
+    avatarInputRef.value.click();
+  } else if (type === 'banner' && bannerInputRef.value) {
+    bannerInputRef.value.click();
+  }
+};
+
+const handleFileChange = async (event: Event, type: 'avatar' | 'banner') => {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file || !isOwner.value) return;
+
+  isUploading.value = type;
+
+  const storagePath = `users/${props.userId}/${type}/${file.name}`;
+  const fileRef = storageRef(storage, storagePath);
+
+  try {
+    const snapshot = await uploadBytes(fileRef, file);
+    const downloadURL = await getDownloadURL(snapshot.ref);
+
+    const userDocRef = doc(db, "users", props.userId);
+    const dataToUpdate = type === 'avatar' ? { avatarUrl: downloadURL } : { bannerUrl: downloadURL };
+    await updateDoc(userDocRef, dataToUpdate);
+    userProfile.value = { ...userProfile.value, ...dataToUpdate };
+    showSuccessModal.value = true;
+  } catch (error) {
+    console.error(`Errore nel caricamento del ${type}:`, error);
+  } finally {
+    isUploading.value = null;
+    if (event.target) (event.target as HTMLInputElement).value = '';
+  }
+};
+
+const closeSuccessModal = () => {
+  showSuccessModal.value = false;
+};
 
 const openEditor = (section: string) => {
   if (!isOwner.value) return;
@@ -169,7 +218,10 @@ watch(activeTab, (newTab) => {
     <ProfileHeader 
       :user-profile="userProfile" 
       :is-owner="isOwner" 
+      :is-uploading="isUploading"
       v-model:active-tab="activeTab" 
+      @trigger-file-upload="triggerFileUpload"
+      @open-settings-menu="isSettingsMenuOpen = true"
     />
     
     <main class="profile-content">
@@ -218,6 +270,12 @@ watch(activeTab, (newTab) => {
     </main>
   </div>
   <div v-else class="loading-page">Profilo non trovato.</div>
+  
+  <input type="file" ref="avatarInputRef" @change="handleFileChange($event, 'avatar')" accept="image/*" style="display: none;" />
+  <input type="file" ref="bannerInputRef" @change="handleFileChange($event, 'banner')" accept="image/*" style="display: none;" />
+  <UploadSuccessModal v-if="showSuccessModal" @close="closeSuccessModal" />
+  
+  <SettingsMenu v-if="isSettingsMenuOpen" @close="isSettingsMenuOpen = false" />
 </template>
 
 <style scoped>

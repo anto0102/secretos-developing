@@ -1,21 +1,17 @@
 <script setup lang="ts">
 import { defineProps, defineEmits } from 'vue';
 import { useRouter } from 'vue-router';
-import { Camera, LayoutGrid, MessageSquare, Image, Loader, Settings } from 'lucide-vue-next';
+import { Camera, LayoutGrid, MessageSquare, Image, Loader, MoreHorizontal } from 'lucide-vue-next';
 
 const props = defineProps({
   userProfile: Object,
   isUploading: String,
   activeTab: String,
-  isOwner: Boolean, // Riceviamo la prop
+  isOwner: Boolean,
 });
 
-const emit = defineEmits(['triggerFileUpload', 'update:activeTab']);
+const emit = defineEmits(['triggerFileUpload', 'update:activeTab', 'openSettingsMenu']);
 const router = useRouter();
-
-const goToSettings = () => {
-    router.push({ name: 'Settings' });
-};
 </script>
 
 <template>
@@ -46,8 +42,8 @@ const goToSettings = () => {
         <MessageSquare :size="16" />
         <span class="button-text">Commenti</span>
       </button>
-      <button v-if="isOwner" @click="goToSettings" class="settings-btn">
-        <Settings :size="20" />
+      <button v-if="isOwner" @click="emit('openSettingsMenu')" class="settings-btn">
+        <MoreHorizontal :size="20" />
       </button>
     </div>
   </div>
