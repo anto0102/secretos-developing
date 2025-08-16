@@ -11,15 +11,15 @@ defineEmits(['vote-comment', 'delete-comment', 'submit-reply']);
 </script>
 
 <template>
-  <div v-if="replies && replies.length > 0" class="replies-container">
-    <div v-if="areVisible" class="replies-list">
+  <div v-if="replies && replies.length > 0 && areVisible" class="replies-container">
+    <div class="replies-list">
       <CommentItem
         v-for="reply in replies"
         :key="reply.id"
         :comment="reply"
         @vote-comment="(payload) => $emit('vote-comment', payload)"
         @delete-comment="(commentId) => $emit('delete-comment', commentId)"
-        @submit-reply="(payload) => $emit('submit-reply', payload)"
+        @reply-request="(payload) => $emit('reply-request', payload)"
       />
     </div>
   </div>

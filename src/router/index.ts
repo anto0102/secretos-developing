@@ -3,6 +3,7 @@ import { auth } from '../firebase/config';
 import HomeView from '../views/HomeView.vue';
 import SettingsView from '../views/SettingsView.vue';
 import PostView from '../views/PostView.vue';
+import PostCommentsView from '../views/PostCommentsView.vue'; // Importa il componente
 
 const routes = [
   { path: '/', name: 'Home', component: HomeView },
@@ -34,6 +35,13 @@ const routes = [
     path: '/post/:postId',
     name: 'PostView',
     component: PostView,
+    props: true,
+  },
+  // Aggiungi questa nuova rotta per la pagina dei commenti
+  {
+    path: '/post/:postId/comments',
+    name: 'PostCommentsView',
+    component: PostCommentsView,
     props: true
   },
 ];

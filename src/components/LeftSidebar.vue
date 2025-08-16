@@ -1,16 +1,35 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { Home, Search, Bell, User, LogIn, PenSquare, LogOut } from 'lucide-vue-next';
+import { Home, Search, PlusCircle, Bell, User, LogIn, PenSquare, LogOut } from 'lucide-vue-next';
 import { auth } from '../firebase/config';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { db } from '../firebase/config';
+import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 
 const router = useRouter();
 const isLoggedIn = ref(false);
+const hasUnreadNotifications = ref(false);
+
+const fetchUnreadNotificationsCount = (userId: string) => {
+  const q = query(
+    collection(db, 'notifications'),
+    where('recipientId', '==', userId),
+    where('isRead', '==', false)
+  );
+
+  // Usa onSnapshot per aggiornare il badge in tempo reale
+  onSnapshot(q, (snapshot) => {
+    hasUnreadNotifications.value = !snapshot.empty;
+  });
+};
 
 onMounted(() => {
   onAuthStateChanged(auth, (user) => {
     isLoggedIn.value = !!user;
+    if (user) {
+      fetchUnreadNotificationsCount(user.uid);
+    }
   });
 });
 
@@ -38,9 +57,10 @@ const handleLogout = async () => {
       </router-link>
 
       <div v-if="isLoggedIn">
-        <router-link to="/notifications" class="nav-link">
+        <router-link to="/notifications" class="nav-link notification-link">
           <Bell :size="20" />
           <span>Notifiche</span>
+          <div v-if="hasUnreadNotifications" class="notification-badge"></div>
         </router-link>
         <router-link to="/profile" class="nav-link">
           <User :size="20" />
@@ -67,7 +87,6 @@ const handleLogout = async () => {
 </template>
 
 <style scoped>
-/* Gli stili rimangono quasi invariati */
 .sidebar {
   width: 250px; background-color: #161616; padding: 1.5rem; height: 100vh;
   border-right: 1px solid #363636; display: flex; flex-direction: column;
@@ -82,4 +101,23 @@ nav { display: flex; flex-direction: column; gap: 0.5rem; }
 }
 .nav-link.router-link-exact-active { background-color: #2a2a2a; color: #fff; }
 .nav-link:hover { background-color: #2a2a2a; color: #fff; }
+
+.notification-link {
+    position: relative;
+}
+.notification-badge {
+    position: absolute;
+    top: 10px;
+    left: 20px;
+    width: 8px;
+    height: 8px;
+    background-color: #ef4444;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+@keyframes pulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.5); opacity: 0.5; }
+    100% { transform: scale(1); opacity: 1; }
+}
 </style>

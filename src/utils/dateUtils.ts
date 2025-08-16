@@ -2,13 +2,20 @@
 
 import { Timestamp } from 'firebase/firestore';
 
-export function formatTimeAgo(timestamp: Timestamp | null): string {
+export function formatTimeAgo(timestamp: Timestamp | Date | null | undefined): string {
   if (!timestamp) {
     return 'data non disponibile';
   }
 
+  let date: Date;
+  // Controlla se l'oggetto è un Timestamp di Firebase
+  if ('toDate' in timestamp && typeof timestamp.toDate === 'function') {
+    date = timestamp.toDate();
+  } else {
+    date = timestamp as Date;
+  }
+
   const now = new Date();
-  const date = timestamp.toDate();
   const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
   let interval = seconds / 31536000;

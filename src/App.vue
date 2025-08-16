@@ -1,6 +1,36 @@
 <script setup lang="ts">
+import { ref, onMounted } from 'vue';
 import BottomNavbar from './components/BottomNavbar.vue';
 import LeftSidebar from './components/LeftSidebar.vue';
+import NotificationToast from './components/NotificationToast.vue';
+import { db, auth } from './firebase/config';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+
+const unreadNotification = ref(null);
+
+onMounted(() => {
+    auth.onAuthStateChanged(user => {
+        if (user) {
+            const q = query(
+                collection(db, 'notifications'),
+                where('recipientId', '==', user.uid),
+                where('isRead', '==', false)
+            );
+            onSnapshot(q, (snapshot) => {
+                if (!snapshot.empty) {
+                    const latestNotif = snapshot.docs[0].data();
+                    unreadNotification.value = latestNotif;
+                    setTimeout(() => { unreadNotification.value = null; }, 5000);
+                }
+            });
+        }
+    });
+});
+
+const handleNotificationClick = () => {
+  // logica di reindirizzamento...
+  unreadNotification.value = null;
+};
 </script>
 
 <template>
@@ -16,6 +46,12 @@ import LeftSidebar from './components/LeftSidebar.vue';
     <div class="bottom-nav-container">
       <BottomNavbar />
     </div>
+
+    <NotificationToast 
+      :notification="unreadNotification" 
+      @close="unreadNotification = null" 
+      @click="handleNotificationClick"
+    />
   </div>
 </template>
 
