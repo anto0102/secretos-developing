@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { db, auth } from '../firebase/config';
+import { db, auth, storage } from '../firebase/config';
 import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
-import { Loader, ArrowLeft, Settings, Image as ImageIcon, ListTodo, X } from 'lucide-vue-next';
+import { Loader, ArrowLeft, Settings, Image as ImageIcon, X, Bold, EyeOff } from 'lucide-vue-next';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 const router = useRouter();
 const postText = ref('');
@@ -15,15 +16,62 @@ const currentUser = ref<{ username: string; avatarUrl: string; birthdate?: strin
 const isSettingsOpen = ref(false);
 const isAnonymous = ref(false);
 const isPoll = ref(false);
+const isMediaSpoiler = ref(false);
 const pollOptions = ref([ { text: '' }, { text: '' } ]);
 const pollSettings = ref({
   voteType: 'single',
   resultsVisibility: 'always',
-  voteVisibility: 'public' // Aggiungiamo la nuova impostazione
+  voteVisibility: 'public'
 });
 
 const MAX_CHARS = 500;
 const MAX_POLL_OPTIONS = 5;
+
+const selectedMediaFile = ref<File | null>(null);
+const mediaPreviewUrl = ref<string | null>(null);
+const mediaType = ref<'image' | 'video' | null>(null);
+const mediaInputRef = ref<HTMLInputElement | null>(null);
+
+const triggerFileInput = () => {
+  if (isPoll.value) return;
+  mediaInputRef.value?.click();
+};
+
+const handleMediaSelect = (event: Event) => {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (file) {
+    selectedMediaFile.value = file;
+    mediaPreviewUrl.value = URL.createObjectURL(file);
+    if (file.type.startsWith('image/')) {
+      mediaType.value = 'image';
+    } else if (file.type.startsWith('video/')) {
+      mediaType.value = 'video';
+    } else {
+      mediaType.value = null;
+    }
+  }
+};
+
+const clearMedia = () => {
+  selectedMediaFile.value = null;
+  mediaPreviewUrl.value = null;
+  mediaType.value = null;
+  isMediaSpoiler.value = false;
+  if (mediaInputRef.value) {
+    mediaInputRef.value.value = '';
+  }
+};
+
+// Funzioni per il Markdown
+const applyMarkdown = (syntax: string) => {
+  const textarea = document.querySelector('textarea');
+  if (!textarea) return;
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const selectedText = postText.value.substring(start, end);
+  const newText = postText.value.substring(0, start) + syntax + selectedText + syntax + postText.value.substring(end);
+  postText.value = newText;
+};
 
 onMounted(async () => {
   const user = auth.currentUser;
@@ -75,7 +123,7 @@ const isFormValid = computed(() => {
     return isTextValid && validOptions.length >= 2;
   }
   
-  return isTextValid;
+  return isTextValid || selectedMediaFile.value;
 });
 
 const addPollOption = () => {
@@ -90,9 +138,21 @@ const removePollOption = (index: number) => {
 };
 
 watch(isPoll, (newVal) => {
-  if (!newVal) {
+  if (newVal) {
+    clearMedia();
+  } else {
     pollOptions.value = [{ text: '' }, { text: '' }];
   }
+});
+watch(selectedMediaFile, (newVal) => {
+    if (!newVal) {
+        isMediaSpoiler.value = false;
+    }
+});
+watch(isMediaSpoiler, (newVal) => {
+    if (newVal) {
+        isPoll.value = false;
+    }
 });
 
 const submitPost = async () => {
@@ -106,6 +166,21 @@ const submitPost = async () => {
   isLoading.value = true;
   errorMsg.value = '';
 
+  let mediaUrl = null;
+  if (selectedMediaFile.value) {
+    const filePath = `posts/${user.uid}/${Date.now()}_${selectedMediaFile.value.name}`;
+    const fileRef = storageRef(storage, filePath);
+    try {
+      await uploadBytes(fileRef, selectedMediaFile.value);
+      mediaUrl = await getDownloadURL(fileRef);
+    } catch (e) {
+      console.error("Errore nel caricamento del media:", e);
+      errorMsg.value = "C'è stato un problema durante il caricamento del media.";
+      isLoading.value = false;
+      return;
+    }
+  }
+
   try {
     const postData: any = {
       text: postText.value,
@@ -116,7 +191,10 @@ const submitPost = async () => {
       commentsCount: 0,
       createdAt: serverTimestamp(),
       upvotedBy: [],
-      downvotedBy: []
+      downvotedBy: [],
+      mediaUrl: mediaUrl,
+      mediaType: mediaType.value,
+      isMediaSpoiler: isMediaSpoiler.value
     };
 
     if (isPoll.value) {
@@ -161,10 +239,22 @@ const submitPost = async () => {
               :placeholder="isPoll ? 'Qual è la tua domanda?' : 'Scrivi qui...'"
               :maxlength="MAX_CHARS"
             ></textarea>
+            <div class="markdown-toolbar">
+                <button type="button" @click="applyMarkdown('**')"><Bold :size="20" /></button>
+                <button type="button" @click="applyMarkdown('||')"><EyeOff :size="20" /></button>
+            </div>
             <div class="char-counter" :class="{ 'is-warning': charsRemaining < 20, 'is-error': charsRemaining < 0 }">
               {{ charsRemaining }}
             </div>
           </div>
+          
+          <transition name="fade">
+            <div v-if="mediaPreviewUrl" class="media-preview">
+              <img v-if="mediaType === 'image'" :src="mediaPreviewUrl" alt="Anteprima media" />
+              <video v-else-if="mediaType === 'video'" :src="mediaPreviewUrl" controls></video>
+              <button type="button" @click="clearMedia" class="clear-media-btn"><X :size="20" /></button>
+            </div>
+          </transition>
 
           <transition name="fade">
             <div v-if="isPoll" class="poll-creator">
@@ -209,45 +299,29 @@ const submitPost = async () => {
       </div>
       <div class="divider"></div>
       <h3 class="panel-title">Aggiungi al post</h3>
+      
       <div class="setting-item">
         <div class="setting-label"><strong>Crea Sondaggio</strong><p>Trasforma il post in un sondaggio.</p></div>
-        <label class="switch"><input type="checkbox" v-model="isPoll"><span class="slider"></span></label>
+        <label class="switch"><input type="checkbox" v-model="isPoll" :disabled="!!selectedMediaFile"><span class="slider"></span></label>
       </div>
+      
+      <button type="button" @click="triggerFileInput" class="panel-button" :disabled="isPoll || !!selectedMediaFile">
+        <ImageIcon :size="20" /><span>Aggiungi Media</span>
+      </button>
+      <input type="file" ref="mediaInputRef" @change="handleMediaSelect" accept="image/*,video/*" style="display: none;" />
 
       <transition name="fade">
-        <div v-if="isPoll" class="advanced-poll-settings">
-          <div class="setting-item-col">
-            <label>Tipo di voto</label>
-            <div class="radio-group">
-              <button type="button" @click="pollSettings.voteType = 'single'" :class="{ active: pollSettings.voteType === 'single' }">Singolo</button>
-              <button type="button" @click="pollSettings.voteType = 'multiple'" :class="{ active: pollSettings.voteType === 'multiple' }">Multiplo</button>
-            </div>
-          </div>
-          <div class="setting-item-col">
-            <label>Visibilità risultati</label>
-            <div class="radio-group">
-              <button type="button" @click="pollSettings.resultsVisibility = 'always'" :class="{ active: pollSettings.resultsVisibility === 'always' }">Sempre</button>
-              <button type="button" @click="pollSettings.resultsVisibility = 'after_vote'" :class="{ active: pollSettings.resultsVisibility === 'after_vote' }">Dopo il voto</button>
-            </div>
-          </div>
-          <div class="setting-item-col">
-            <label>Visibilità del voto</label>
-            <div class="radio-group">
-              <button type="button" @click="pollSettings.voteVisibility = 'public'" :class="{ active: pollSettings.voteVisibility === 'public' }">Pubblico</button>
-              <button type="button" @click="pollSettings.voteVisibility = 'anonymous'" :class="{ active: pollSettings.voteVisibility === 'anonymous' }">Anonimo</button>
-            </div>
-          </div>
+        <div v-if="selectedMediaFile" class="setting-item spoiler-media-setting">
+            <div class="setting-label"><strong>Oscura media</strong><p>Rende l'immagine o il video sfocato.</p></div>
+            <label class="switch"><input type="checkbox" v-model="isMediaSpoiler"><span class="slider"></span></label>
         </div>
       </transition>
-      
-      <button class="panel-button" disabled>
-        <ImageIcon :size="20" /><span>Aggiungi Media (in arrivo)</span>
-      </button>
     </aside>
   </div>
 </template>
 
 <style scoped>
+/* Stili Generali (invariati) */
 .page-wrapper { position: relative; width: 100%; overflow-x: hidden; min-height: 100vh; }
 .create-post-container { width: 100%; padding: 1rem; box-sizing: border-box; transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1); }
 .main-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
@@ -308,4 +382,64 @@ input:checked + .slider:before { transform: translateX(20px); }
 .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(-10px); }
 .list-enter-active, .list-leave-active { transition: all 0.3s ease; }
 .list-enter-from, .list-leave-to { opacity: 0; transform: translateX(30px); }
+
+.media-preview {
+  position: relative;
+  width: 100%;
+  max-height: 400px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-top: 1rem;
+  border: 1px solid #363636;
+}
+.media-preview img, .media-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.clear-media-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.clear-media-btn:hover {
+  background-color: rgba(0, 0, 0, 0.8);
+  transform: scale(1.1);
+}
+.markdown-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    position: absolute;
+    bottom: 0.5rem;
+    left: 0.5rem;
+    z-index: 10;
+}
+.markdown-toolbar button {
+    background: #363636;
+    border: none;
+    padding: 0.5rem;
+    border-radius: 6px;
+    color: #a0a0a0;
+    transition: background-color 0.2s, color 0.2s;
+}
+.markdown-toolbar button:hover {
+    background-color: #444;
+    color: #fff;
+}
+.spoiler-media-setting {
+    margin-top: 1.5rem;
+    border-top: 1px solid #363636;
+    padding-top: 1.5rem;
+}
 </style>

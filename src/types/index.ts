@@ -9,6 +9,9 @@ export interface Post {
   authorId: string;
   text: string;
   score: number;
+  mediaUrl?: string; // <-- MODIFICATO: ora è l'URL di media generico
+  mediaType?: 'image' | 'video'; // <-- NUOVO: per distinguere tra immagine e video
+  isMediaSpoiler?: boolean; // <-- NUOVO: indica se il media è oscurato
   commentsCount: number;
   createdAt?: Timestamp;
   upvotedBy: string[];

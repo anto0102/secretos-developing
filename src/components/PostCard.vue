@@ -13,9 +13,18 @@ const isOwner = computed(() => auth.currentUser?.uid === props.post.authorId);
 const isUpvoted = computed(() => auth.currentUser && props.post.upvotedBy?.includes(auth.currentUser.uid));
 const isDownvoted = computed(() => auth.currentUser && props.post.downvotedBy?.includes(auth.currentUser.uid));
 
-// Stato per la modale dei voti
 const isVotersModalOpen = ref(false);
 const votersList = ref<{ optionText: string, users: {id: string, username: string, avatarUrl: string}[] }[]>([]);
+
+const showMedia = ref(false);
+
+const parseMarkdown = (text: string) => {
+    // Sostituisci il grassetto (bold)
+    text = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+    // Sostituisci il testo spoiler
+    text = text.replace(/\|\|(.*?)\|\|/g, '<span class="spoiler-text">$1</span>');
+    return text;
+};
 
 const totalVotes = computed(() => {
   if (!props.post.isPoll || !props.post.pollOptions) return 0;
@@ -42,7 +51,7 @@ const userVotesIndices = computed(() => {
 
 const showResults = computed(() => {
   if (!props.post.isPoll) return false;
-  if (!props.post.pollSettings) return true; 
+  if (!props.post.pollSettings) return true;
   if (props.post.pollSettings.resultsVisibility === 'always') return true;
   return userHasVoted.value;
 });
@@ -163,7 +172,15 @@ const deletePost = async () => {
       </div>
     </div>
     
-    <p class="card-text" @click="router.push({ name: 'PostView', params: { postId: post.id } })">{{ post.text }}</p>
+    <p class="card-text" @click="router.push({ name: 'PostView', params: { postId: post.id } })" v-html="parseMarkdown(post.text)"></p>
+    
+    <div v-if="post.mediaUrl" class="media-container" @click="router.push({ name: 'PostView', params: { postId: post.id } })">
+        <div v-if="post.isMediaSpoiler && !showMedia" class="spoiler-overlay-media" @click.stop="showMedia = true">
+            <span>Clicca per mostrare il media</span>
+        </div>
+        <img v-if="post.mediaType === 'image'" :src="post.mediaUrl" class="post-media" alt="Immagine del post" :class="{ 'is-spoiler': post.isMediaSpoiler && !showMedia }"/>
+        <video v-else-if="post.mediaType === 'video'" :src="post.mediaUrl" controls class="post-media" :class="{ 'is-spoiler': post.isMediaSpoiler && !showMedia }"></video>
+    </div>
 
     <div v-if="post.isPoll && post.pollOptions" class="poll-container">
       <div 
@@ -226,13 +243,31 @@ const deletePost = async () => {
 </template>
 
 <style scoped>
-.post-card { background-color: #2a2a2a; border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 1rem; border: 1px solid #363636; position: relative; }
+.post-card { background-color: #2a2a2a; border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 1rem; border: 1px solid #363636; position: relative; overflow-x: hidden; /* Aggiunto per evitare lo scroll orizzontale */ }
 .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
 .author-link { display: flex; align-items: center; gap: 0.75rem; text-decoration: none; }
 .author-avatar, .author-avatar-placeholder { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; background-color: #444; }
 .author { color: #a0a0a0; font-size: 0.9rem; font-weight: bold; transition: color 0.2s; }
 .author-link:hover .author { color: #fff; }
-.card-text { color: #e0e0e0; line-height: 1.6; font-size: 1rem; white-space: pre-wrap; cursor: pointer; }
+.card-text { 
+  color: #e0e0e0; 
+  line-height: 1.6; 
+  font-size: 1rem; 
+  white-space: pre-wrap; 
+  cursor: pointer;
+  word-wrap: break-word;
+}
+.card-text ::v-deep b { color: #fff; font-weight: bold; }
+/* Stile aggiornato per il testo spoiler */
+.card-text ::v-deep .spoiler-text { 
+  background-color: #3f4657; 
+  color: transparent; 
+  user-select: none; 
+  transition: color 0.2s ease, background-color 0.2s ease;
+  padding: 0 0.25rem; 
+  border-radius: 4px;
+}
+.card-text ::v-deep .spoiler-text:hover { color: #fff; background-color: #4b5563; }
 .card-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 1.5rem; color: #a0a0a0; }
 .voting, .comments { display: flex; align-items: center; gap: 0.75rem; }
 .comments { gap: 0.5rem; cursor: pointer; transition: color 0.2s; }
@@ -254,10 +289,31 @@ const deletePost = async () => {
 .poll-option:hover { border-color: #4f46e5; }
 .poll-option.is-voted-by-user { border-color: #4f46e5; box-shadow: 0 0 10px rgba(79, 70, 229, 0.5); }
 .poll-bar { position: absolute; top: 0; left: 0; height: 100%; background: #4f46e5; opacity: 0.3; transition: width 0.5s cubic-bezier(0.25, 1, 0.5, 1); }
-.poll-info { position: relative; padding: 0.8rem 1rem; display: flex; justify-content: space-between; align-items: center; color: #fff; font-weight: bold; }
-.poll-text-wrapper { display: flex; align-items: center; gap: 0.5rem; }
-.check-icon { color: #4f46e5; flex-shrink: 0; }
-.poll-votes { font-size: 0.9rem; color: #a0a0a0; font-weight: bold; }
+/* MODIFICA QUI */
+.poll-info { 
+  position: relative;
+  padding: 0.8rem 1rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap; 
+  color: #fff;
+  font-weight: bold;
+}
+
+.poll-text-wrapper {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  flex-grow: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.poll-text {
+  min-width: 0;
+  word-break: break-word;
+}
+.poll-votes { font-size: 0.9rem; color: #a0a0a0; font-weight: bold; flex-shrink: 0; }
 .results-hidden-text { font-size: 0.8rem; text-align: center; color: #a0a0a0; margin-top: 0.5rem; }
 .poll-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; padding: 0 0.5rem; }
 .total-votes { font-size: 0.8rem; color: #a0a0a0; }
@@ -274,4 +330,52 @@ const deletePost = async () => {
 .voter-item { display: flex; align-items: center; gap: 0.75rem; background-color: #1f1f1f; padding: 0.5rem; border-radius: 6px; }
 .voter-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
 .no-votes { font-size: 0.9rem; color: #a0a0a0; text-align: center; }
+
+.media-container {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 1rem;
+  border-radius: 8px;
+  overflow: hidden;
+  line-height: 0;
+  display: block;
+}
+.post-media {
+  width: auto;
+  max-width: 100%;
+  max-height: 500px;
+  border-radius: 8px;
+  display: block;
+  cursor: pointer;
+}
+/* Stili per il media oscurato */
+.post-media.is-spoiler {
+  filter: blur(15px);
+  transition: filter 0.3s ease;
+}
+.post-media.is-spoiler:hover {
+  filter: blur(5px);
+}
+.spoiler-overlay-media {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(12px);
+    z-index: 5;
+    cursor: pointer;
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #fff;
+    transition: all 0.2s ease;
+}
+.spoiler-overlay-media:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+}
 </style>
