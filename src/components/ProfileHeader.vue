@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineProps, defineEmits, ref } from 'vue';
+import { defineProps, defineEmits } from 'vue';
 import Banner from './Banner.vue';
 import UserInfo from './UserInfo.vue';
 
@@ -7,6 +7,7 @@ const props = defineProps({
   userProfile: Object,
   isUploading: String,
   activeTab: String,
+  isOwner: Boolean, // Aggiungiamo la prop in ricezione
 });
 
 const emit = defineEmits(['triggerFileUpload', 'update:activeTab']);
@@ -25,7 +26,7 @@ const handleUpdateActiveTab = (tab: string) => {
     <Banner
       :banner-url="userProfile?.bannerUrl"
       :is-uploading="isUploading"
-      @trigger-file-upload="handleTriggerFileUpload"
+      :is-owner="isOwner" @trigger-file-upload="handleTriggerFileUpload"
     />
     
     <div class="user-info-wrapper">
@@ -33,7 +34,7 @@ const handleUpdateActiveTab = (tab: string) => {
             :user-profile="userProfile"
             :is-uploading="isUploading"
             :active-tab="activeTab"
-            @trigger-file-upload="handleTriggerFileUpload"
+            :is-owner="isOwner" @trigger-file-upload="handleTriggerFileUpload"
             @update:active-tab="handleUpdateActiveTab"
         />
     </div>

@@ -4,7 +4,8 @@ import { Camera, Loader } from 'lucide-vue-next';
 
 const props = defineProps({
   bannerUrl: String,
-  isUploading: String
+  isUploading: String,
+  isOwner: Boolean, // Riceviamo la prop
 });
 
 const emit = defineEmits(['triggerFileUpload']);
@@ -14,7 +15,7 @@ const emit = defineEmits(['triggerFileUpload']);
   <div class="banner-container">
     <img v-if="bannerUrl" :src="bannerUrl" class="banner-img" alt="User banner">
     <div v-else class="banner-placeholder"></div>
-    <button @click="emit('triggerFileUpload', 'banner')" class="edit-btn banner-edit" :disabled="!!isUploading">
+    <button v-if="isOwner" @click="emit('triggerFileUpload', 'banner')" class="edit-btn banner-edit" :disabled="!!isUploading">
       <Camera :size="20" />
     </button>
     <div v-if="isUploading === 'banner'" class="upload-overlay">

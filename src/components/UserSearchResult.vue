@@ -15,10 +15,10 @@ const router = useRouter();
 
 // Funzione per navigare alla pagina del profilo quando si clicca
 const goToProfile = () => {
-  // Usiamo il nome della rotta 'Profile' che hai già definito
-  router.push({ name: 'Profile' }); 
-  // NOTA: Per un profilo pubblico di ALTRI utenti, dovrai modificare la rotta 
-  // per accettare un ID, es: /profile/userId
+  // --- INIZIO MODIFICA ---
+  // Aggiungiamo i "params" con l'id dell'utente, che è obbligatorio per la rotta 'Profile'
+  router.push({ name: 'Profile', params: { userId: props.user.id } }); 
+  // --- FINE MODIFICA ---
 };
 </script>
 

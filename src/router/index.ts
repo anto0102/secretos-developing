@@ -19,11 +19,17 @@ const routes = [
   {
     path: '/profile',
     redirect: () => {
-      if (!auth.currentUser) return { name: 'Login' };
+      if (!auth.currentUser) {
+        return { name: 'Login' };
+      }
       return { path: `/profile/${auth.currentUser.uid}` };
     }
   },
-  { path: '/settings', name: 'Settings', component: SettingsView },
+  { 
+    path: '/settings', 
+    name: 'Settings', 
+    component: SettingsView 
+  },
   { 
     path: '/post/:postId',
     name: 'PostView',

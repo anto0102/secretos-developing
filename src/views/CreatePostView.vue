@@ -1,24 +1,105 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { db, auth } from '../firebase/config';
-// Importiamo le funzioni che ci servono per leggere un singolo documento
 import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { Loader, ArrowLeft, Settings, Image as ImageIcon, ListTodo, X } from 'lucide-vue-next';
 
 const router = useRouter();
 const postText = ref('');
 const errorMsg = ref('');
 const isLoading = ref(false);
 
-const submitPost = async () => {
-  if (postText.value.trim() === '') {
-    errorMsg.value = "Il post non può essere vuoto.";
-    return;
-  }
+const currentUser = ref<{ username: string; avatarUrl: string; birthdate?: string; gender?: string; } | null>(null);
 
+const isSettingsOpen = ref(false);
+const isAnonymous = ref(false);
+const isPoll = ref(false);
+const pollOptions = ref([ { text: '' }, { text: '' } ]);
+const pollSettings = ref({
+  voteType: 'single',
+  resultsVisibility: 'always',
+  voteVisibility: 'public' // Aggiungiamo la nuova impostazione
+});
+
+const MAX_CHARS = 500;
+const MAX_POLL_OPTIONS = 5;
+
+onMounted(async () => {
   const user = auth.currentUser;
-  if (!user) {
-    errorMsg.value = "Devi aver effettuato l'accesso per poter pubblicare.";
+  if (user) {
+    const userDocRef = doc(db, "users", user.uid);
+    const userDocSnap = await getDoc(userDocRef);
+    if (userDocSnap.exists()) {
+      const data = userDocSnap.data();
+      currentUser.value = {
+        username: data.username,
+        avatarUrl: data.avatarUrl,
+        birthdate: data.birthdate,
+        gender: data.gender
+      };
+    }
+  }
+});
+
+const calculateAge = (birthdate: string): number | null => {
+  if (!birthdate) return null;
+  const birthDate = new Date(birthdate);
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const m = today.getMonth() - birthDate.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+  return age;
+};
+
+const authorName = computed(() => {
+  if (isAnonymous.value && currentUser.value) {
+    const age = currentUser.value.birthdate ? `di ${calculateAge(currentUser.value.birthdate)} anni` : '';
+    let gender = '';
+    if (currentUser.value.gender === 'male') gender = 'Uomo';
+    else if (currentUser.value.gender === 'female') gender = 'Donna';
+    else gender = 'Persona';
+    return `${gender} ${age}`.trim();
+  }
+  return currentUser.value?.username || 'Utente';
+});
+
+const charsRemaining = computed(() => MAX_CHARS - postText.value.length);
+
+const isFormValid = computed(() => {
+  const textLen = postText.value.trim().length;
+  const isTextValid = textLen > 0 && textLen <= MAX_CHARS;
+
+  if (isPoll.value) {
+    const validOptions = pollOptions.value.filter(opt => opt.text.trim() !== '');
+    return isTextValid && validOptions.length >= 2;
+  }
+  
+  return isTextValid;
+});
+
+const addPollOption = () => {
+  if (pollOptions.value.length < MAX_POLL_OPTIONS) {
+    pollOptions.value.push({ text: '' });
+  }
+};
+const removePollOption = (index: number) => {
+  if (pollOptions.value.length > 2) {
+    pollOptions.value.splice(index, 1);
+  }
+};
+
+watch(isPoll, (newVal) => {
+  if (!newVal) {
+    pollOptions.value = [{ text: '' }, { text: '' }];
+  }
+});
+
+const submitPost = async () => {
+  if (!isFormValid.value) return;
+  const user = auth.currentUser;
+  if (!user || !currentUser.value) {
+    errorMsg.value = "Devi essere loggato per pubblicare.";
     return;
   }
   
@@ -26,33 +107,29 @@ const submitPost = async () => {
   errorMsg.value = '';
 
   try {
-    // --- 1. RECUPERA L'USERNAME DELL'UTENTE ---
-    // Creiamo un riferimento al documento dell'utente nella collezione 'users'
-    const userDocRef = doc(db, "users", user.uid);
-    // Leggiamo i dati di quel documento
-    const userDocSnap = await getDoc(userDocRef);
-
-    let authorUsername = 'Anonimo'; // Valore di default
-    if (userDocSnap.exists()) {
-      // Se il documento esiste, prendiamo il campo 'username'
-      authorUsername = userDocSnap.data().username;
-    } else {
-      // Questo non dovrebbe succedere se la registrazione è andata a buon fine
-      console.error("Nessun documento utente trovato per l'utente loggato!");
-    }
-
-    // --- 2. SALVA IL POST CON L'USERNAME CORRETTO ---
-    await addDoc(collection(db, "posts"), {
+    const postData: any = {
       text: postText.value,
-      author: authorUsername,   // <-- Usiamo l'username che abbiamo recuperato
+      author: authorName.value,
       authorId: user.uid,
+      isAnonymous: isAnonymous.value,
       score: 0,
       commentsCount: 0,
-      createdAt: serverTimestamp()
-    });
+      createdAt: serverTimestamp(),
+      upvotedBy: [],
+      downvotedBy: []
+    };
+
+    if (isPoll.value) {
+      postData.isPoll = true;
+      postData.pollOptions = pollOptions.value
+        .filter(opt => opt.text.trim() !== '')
+        .map(opt => ({ text: opt.text, votes: 0, votedBy: [] }));
+      postData.pollSettings = pollSettings.value;
+    }
+
+    await addDoc(collection(db, "posts"), postData);
     
     router.push('/');
-
   } catch (error) {
     console.error("Errore durante la creazione del post:", error);
     errorMsg.value = "C'è stato un problema durante la pubblicazione del post.";
@@ -63,48 +140,172 @@ const submitPost = async () => {
 </script>
 
 <template>
-  <div class="create-post-container">
-    <div class="create-post-box">
-      <h2>Crea un nuovo post</h2>
-      <form @submit.prevent="submitPost">
-        <textarea
-          v-model="postText"
-          placeholder="Scrivi qui il tuo segreto..."
-          rows="8"
-        ></textarea>
-        <div v-if="errorMsg" class="error-message">{{ errorMsg }}</div>
-        <button type="submit" :disabled="isLoading">
-          {{ isLoading ? 'Pubblicazione...' : 'Pubblica' }}
-        </button>
-      </form>
+  <div class="page-wrapper">
+    <div class="create-post-container" :class="{ 'settings-open': isSettingsOpen }">
+      <header class="main-header">
+        <button @click="router.back()" class="header-btn"><ArrowLeft :size="22" /></button>
+        <h1 class="page-title">Nuovo Post</h1>
+        <button @click="isSettingsOpen = !isSettingsOpen" class="header-btn" :class="{ active: isSettingsOpen }"><Settings :size="22" /></button>
+      </header>
+      
+      <div class="content-body">
+        <div v-if="currentUser" class="user-header">
+          <img :src="currentUser.avatarUrl" class="avatar" alt="User avatar">
+          <span class="username">{{ authorName }}</span>
+        </div>
+        
+        <form @submit.prevent="submitPost">
+          <div class="textarea-wrapper">
+            <textarea
+              v-model="postText"
+              :placeholder="isPoll ? 'Qual è la tua domanda?' : 'Scrivi qui...'"
+              :maxlength="MAX_CHARS"
+            ></textarea>
+            <div class="char-counter" :class="{ 'is-warning': charsRemaining < 20, 'is-error': charsRemaining < 0 }">
+              {{ charsRemaining }}
+            </div>
+          </div>
+
+          <transition name="fade">
+            <div v-if="isPoll" class="poll-creator">
+              <h3 class="poll-title">Opzioni Sondaggio</h3>
+              <transition-group name="list" tag="div" class="poll-options-list">
+                <div v-for="(option, index) in pollOptions" :key="index" class="poll-option">
+                  <input
+                    type="text"
+                    v-model="option.text"
+                    :placeholder="`Opzione ${index + 1}`"
+                    maxlength="50"
+                  />
+                  <button v-if="index > 1" @click.prevent="removePollOption(index)" class="remove-option-btn">
+                    <X :size="18" />
+                  </button>
+                </div>
+              </transition-group>
+              <button
+                v-if="pollOptions.length < MAX_POLL_OPTIONS"
+                @click.prevent="addPollOption"
+                class="add-option-btn"
+              >
+                Aggiungi Opzione
+              </button>
+            </div>
+          </transition>
+
+          <div v-if="errorMsg" class="error-message">{{ errorMsg }}</div>
+          <button type="submit" :disabled="isLoading || !isFormValid" class="submit-btn">
+            <span v-if="!isLoading">Pubblica</span>
+            <Loader v-else :size="20" class="spinner" />
+          </button>
+        </form>
+      </div>
     </div>
+
+    <aside class="settings-panel" :class="{ 'is-open': isSettingsOpen }">
+      <h3 class="panel-title">Opzioni Post</h3>
+      <div class="setting-item">
+        <div class="setting-label"><strong>Post Anonimo</strong><p>Nascondi il tuo username.</p></div>
+        <label class="switch"><input type="checkbox" v-model="isAnonymous"><span class="slider"></span></label>
+      </div>
+      <div class="divider"></div>
+      <h3 class="panel-title">Aggiungi al post</h3>
+      <div class="setting-item">
+        <div class="setting-label"><strong>Crea Sondaggio</strong><p>Trasforma il post in un sondaggio.</p></div>
+        <label class="switch"><input type="checkbox" v-model="isPoll"><span class="slider"></span></label>
+      </div>
+
+      <transition name="fade">
+        <div v-if="isPoll" class="advanced-poll-settings">
+          <div class="setting-item-col">
+            <label>Tipo di voto</label>
+            <div class="radio-group">
+              <button type="button" @click="pollSettings.voteType = 'single'" :class="{ active: pollSettings.voteType === 'single' }">Singolo</button>
+              <button type="button" @click="pollSettings.voteType = 'multiple'" :class="{ active: pollSettings.voteType === 'multiple' }">Multiplo</button>
+            </div>
+          </div>
+          <div class="setting-item-col">
+            <label>Visibilità risultati</label>
+            <div class="radio-group">
+              <button type="button" @click="pollSettings.resultsVisibility = 'always'" :class="{ active: pollSettings.resultsVisibility === 'always' }">Sempre</button>
+              <button type="button" @click="pollSettings.resultsVisibility = 'after_vote'" :class="{ active: pollSettings.resultsVisibility === 'after_vote' }">Dopo il voto</button>
+            </div>
+          </div>
+          <div class="setting-item-col">
+            <label>Visibilità del voto</label>
+            <div class="radio-group">
+              <button type="button" @click="pollSettings.voteVisibility = 'public'" :class="{ active: pollSettings.voteVisibility === 'public' }">Pubblico</button>
+              <button type="button" @click="pollSettings.voteVisibility = 'anonymous'" :class="{ active: pollSettings.voteVisibility === 'anonymous' }">Anonimo</button>
+            </div>
+          </div>
+        </div>
+      </transition>
+      
+      <button class="panel-button" disabled>
+        <ImageIcon :size="20" /><span>Aggiungi Media (in arrivo)</span>
+      </button>
+    </aside>
   </div>
 </template>
 
 <style scoped>
-/* Gli stili rimangono invariati */
-.create-post-container { display: flex; justify-content: center; padding: 2rem; }
-.create-post-box { width: 100%; max-width: 600px; }
-h2 { margin-bottom: 1.5rem; }
-textarea { width: 100%; padding: 0.75rem; border-radius: 4px; border: 1px solid #555; background-color: #2a2a2a; color: #fff; font-size: 1rem; resize: vertical; margin-bottom: 1rem; }
-button { width: 100%; padding: 0.75rem; border: none; border-radius: 4px; background-color: #4f46e5; color: #fff; font-weight: bold; cursor: pointer; transition: background-color 0.2s; }
-button:hover { background-color: #4338ca; }
-button:disabled { background-color: #374151; cursor: not-allowed; }
-.error-message { color: #ef4444; margin-bottom: 1rem; text-align: center; }
+.page-wrapper { position: relative; width: 100%; overflow-x: hidden; min-height: 100vh; }
+.create-post-container { width: 100%; padding: 1rem; box-sizing: border-box; transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1); }
+.main-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+.page-title { font-size: 1.2rem; font-weight: bold; margin: 0; }
+.header-btn { background: none; border: 1px solid #363636; color: #a0a0a0; border-radius: 50%; width: 40px; height: 40px; display: flex; justify-content: center; align-items: center; cursor: pointer; transition: all 0.2s ease; }
+.header-btn:hover { color: #fff; background-color: #2a2a2a; }
+.header-btn.active { color: #4f46e5; border-color: #4f46e5; transform: rotate(45deg); }
+.content-body { max-width: 700px; margin: 0 auto; }
+.user-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+.avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.username { font-weight: bold; }
+.textarea-wrapper { position: relative; margin-bottom: 1rem; }
+textarea { width: 100%; min-height: 120px; background: transparent; color: #e0e0e0; border: none; font-size: 1.5rem; resize: vertical; padding: 0.5rem; box-sizing: border-box; outline: none; }
+.char-counter { position: absolute; bottom: 0.5rem; right: 0.5rem; font-size: 0.8rem; color: #a0a0a0; }
+.char-counter.is-warning { color: #f59e0b; }
+.char-counter.is-error { color: #ef4444; }
+.submit-btn { width: 100%; margin-top: 1.5rem; padding: 0.8rem; border: none; border-radius: 999px; background: linear-gradient(45deg, #4f46e5, #818cf8); color: #fff; font-weight: bold; font-size: 1rem; cursor: pointer; transition: all 0.2s ease; display: flex; justify-content: center; align-items: center; }
+.submit-btn:hover:not(:disabled) { transform: scale(1.02); box-shadow: 0 4px 20px rgba(79, 70, 229, 0.5); }
+.submit-btn:disabled { background: #374151; cursor: not-allowed; }
+.settings-panel { position: absolute; top: 0; right: 0; width: 300px; height: 100%; background-color: #2a2a2a; border-left: 1px solid #363636; padding: 1rem; transform: translateX(100%); transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1); box-sizing: border-box; }
+.settings-panel.is-open { transform: translateX(0); }
+.create-post-container.settings-open { transform: translateX(-300px); }
+.panel-title { font-size: 1rem; font-weight: bold; margin: 1.5rem 0 1rem 0; }
+.setting-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.setting-label strong { display: block; color: #fff; }
+.setting-label p { font-size: 0.8rem; color: #a0a0a0; margin: 0; }
+.divider { height: 1px; background-color: #363636; margin: 1.5rem 0; }
+.panel-button { width: 100%; display: flex; align-items: center; gap: 0.75rem; background-color: #363636; border: none; color: #fff; padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; cursor: pointer; transition: background-color 0.2s; }
+.panel-button:hover { background-color: #444; }
+.panel-button:disabled { cursor: not-allowed; opacity: 0.5; }
+.switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #363636; transition: .4s; border-radius: 34px; }
+.slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+input:checked + .slider { background-color: #4f46e5; }
+input:checked + .slider:before { transform: translateX(20px); }
+.spinner { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.error-message { color: #ef4444; margin-top: 1rem; text-align: center; }
+.poll-creator { margin-top: 1.5rem; border-top: 1px solid #363636; padding-top: 1.5rem; }
+.poll-title { font-size: 0.9rem; font-weight: bold; color: #a0a0a0; text-transform: uppercase; margin: 0 0 1rem 0; }
+.poll-options-list { display: flex; flex-direction: column; gap: 0.75rem; }
+.poll-option { display: flex; align-items: center; gap: 0.5rem; }
+.poll-option input { flex-grow: 1; background-color: #1a1a1a; border: 1px solid #363636; border-radius: 6px; padding: 0.75rem; color: #fff; font-size: 1rem; transition: border-color 0.2s; }
+.poll-option input:focus { outline: none; border-color: #4f46e5; }
+.remove-option-btn { background: none; border: none; color: #a0a0a0; cursor: pointer; padding: 0.5rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
+.remove-option-btn:hover { background-color: #363636; color: #ef4444; }
+.add-option-btn { width: 100%; margin-top: 1rem; background-color: transparent; border: 1px dashed #555; color: #a0a0a0; padding: 0.6rem; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-weight: bold; }
+.add-option-btn:hover { background-color: #2a2a2a; color: #fff; border-color: #777; }
+.advanced-poll-settings { background-color: #1f1f1f; border-radius: 8px; padding: 1rem; margin-top: -0.5rem; margin-bottom: 1rem; }
+.setting-item-col { margin-bottom: 0.75rem; }
+.setting-item-col:last-child { margin-bottom: 0; }
+.setting-item-col label { font-size: 0.9rem; font-weight: bold; color: #a0a0a0; display: block; margin-bottom: 0.5rem; }
+.radio-group { display: flex; background-color: #363636; border-radius: 6px; padding: 4px; }
+.radio-group button { flex: 1; background: none; border: none; color: #a0a0a0; padding: 0.5rem; border-radius: 4px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+.radio-group button.active { background-color: #4f46e5; color: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+.fade-enter-active, .fade-leave-active { transition: all 0.3s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(-10px); }
+.list-enter-active, .list-leave-active { transition: all 0.3s ease; }
+.list-enter-from, .list-leave-to { opacity: 0; transform: translateX(30px); }
 </style>
-// ...
-// Dentro la funzione submitPost
-try {
-    await addDoc(collection(db, "posts"), {
-      text: postText.value,
-      author: authorUsername,
-      authorId: user.uid,
-      score: 0,
-      commentsCount: 0,
-      createdAt: serverTimestamp(),
-      upvotedBy: [], // <-- AGGIUNGI QUESTO
-      downvotedBy: []  // <-- E QUESTO
-    });
-    
-    router.push('/');
-// ...
