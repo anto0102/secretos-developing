@@ -62,7 +62,6 @@ const clearMedia = () => {
   }
 };
 
-// Funzioni per il Markdown
 const applyMarkdown = (syntax: string) => {
   const textarea = document.querySelector('textarea');
   if (!textarea) return;
@@ -309,13 +308,39 @@ const submitPost = async () => {
         <ImageIcon :size="20" /><span>Aggiungi Media</span>
       </button>
       <input type="file" ref="mediaInputRef" @change="handleMediaSelect" accept="image/*,video/*" style="display: none;" />
-
       <transition name="fade">
         <div v-if="selectedMediaFile" class="setting-item spoiler-media-setting">
             <div class="setting-label"><strong>Oscura media</strong><p>Rende l'immagine o il video sfocato.</p></div>
             <label class="switch"><input type="checkbox" v-model="isMediaSpoiler"><span class="slider"></span></label>
         </div>
       </transition>
+      
+      <transition name="fade">
+        <div v-if="isPoll" class="advanced-poll-settings">
+          <div class="setting-item-col">
+            <label>Tipo di voto</label>
+            <div class="radio-group">
+              <button type="button" @click="pollSettings.voteType = 'single'" :class="{ active: pollSettings.voteType === 'single' }">Singolo</button>
+              <button type="button" @click="pollSettings.voteType = 'multiple'" :class="{ active: pollSettings.voteType === 'multiple' }">Multiplo</button>
+            </div>
+          </div>
+          <div class="setting-item-col">
+            <label>Visibilità risultati</label>
+            <div class="radio-group">
+              <button type="button" @click="pollSettings.resultsVisibility = 'always'" :class="{ active: pollSettings.resultsVisibility === 'always' }">Sempre</button>
+              <button type="button" @click="pollSettings.resultsVisibility = 'after_vote'" :class="{ active: pollSettings.resultsVisibility === 'after_vote' }">Dopo il voto</button>
+            </div>
+          </div>
+          <div class="setting-item-col">
+            <label>Visibilità del voto</label>
+            <div class="radio-group">
+              <button type="button" @click="pollSettings.voteVisibility = 'public'" :class="{ active: pollSettings.voteVisibility === 'public' }">Pubblico</button>
+              <button type="button" @click="pollSettings.voteVisibility = 'anonymous'" :class="{ active: pollSettings.voteVisibility === 'anonymous' }">Anonimo</button>
+            </div>
+          </div>
+        </div>
+      </transition>
+
     </aside>
   </div>
 </template>
@@ -371,7 +396,7 @@ input:checked + .slider:before { transform: translateX(20px); }
 .remove-option-btn:hover { background-color: #363636; color: #ef4444; }
 .add-option-btn { width: 100%; margin-top: 1rem; background-color: transparent; border: 1px dashed #555; color: #a0a0a0; padding: 0.6rem; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-weight: bold; }
 .add-option-btn:hover { background-color: #2a2a2a; color: #fff; border-color: #777; }
-.advanced-poll-settings { background-color: #1f1f1f; border-radius: 8px; padding: 1rem; margin-top: -0.5rem; margin-bottom: 1rem; }
+.advanced-poll-settings { background-color: #1f1f1f; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
 .setting-item-col { margin-bottom: 0.75rem; }
 .setting-item-col:last-child { margin-bottom: 0; }
 .setting-item-col label { font-size: 0.9rem; font-weight: bold; color: #a0a0a0; display: block; margin-bottom: 0.5rem; }
