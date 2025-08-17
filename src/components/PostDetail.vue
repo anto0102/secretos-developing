@@ -1,9 +1,9 @@
-+<script setup lang="ts">
-import { defineProps, defineEmits, ref, computed, watch } from 'vue';
+<script setup lang="ts">
+import { defineProps, defineEmits, ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { ArrowUp, ArrowDown, MessageCircle, MoreHorizontal, Trash2, CheckCircle, Eye, X, Pencil } from 'lucide-vue-next';
 import { type Post } from '../types';
 import { auth, db } from '../firebase/config';
-import { doc, getDoc, updateDoc, arrayRemove, arrayUnion, increment, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayRemove, arrayUnion, increment, Timestamp, onSnapshot } from 'firebase/firestore';
 import PostHeader from './PostHeader.vue';
 import PostMedia from './PostMedia.vue';
 import PostFooter from './PostFooter.vue';
@@ -14,40 +14,103 @@ const props = defineProps<{ post: Post }>();
 const emit = defineEmits(['delete-post']);
 const router = useRouter();
 
+const livePost = ref<Post | null>(null);
 const isEditing = ref(false);
-const editedText = ref(props.post.text);
+const editedText = ref('');
 const isVotersModalOpen = ref(false);
 const votersList = ref<{ optionText: string, users: {id: string, username: string, avatarUrl: string}[] }[]>([]);
+let unsubscribe: (() => void) | null = null;
+let timeoutId: number | null = null;
 
-watch(() => props.post.text, (newText) => {
-    if (!isEditing.value) {
-        editedText.value = newText;
+const isPollExpiredRef = ref(false);
+
+const setupPostListener = (id: string) => {
+    if (unsubscribe) unsubscribe();
+    const postDocRef = doc(db, 'posts', id);
+    unsubscribe = onSnapshot(postDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+            livePost.value = { ...props.post, ...docSnap.data(), id: docSnap.id } as Post;
+            if (!isEditing.value) {
+                editedText.value = livePost.value.text;
+            }
+        } else {
+            livePost.value = null;
+        }
+    });
+};
+
+const checkPollExpiration = () => {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (!livePost.value?.isPoll || !livePost.value?.pollEndDate) {
+        isPollExpiredRef.value = false;
+        return;
     }
+    
+    const now = new Date();
+    const endDate = livePost.value.pollEndDate.toDate();
+    const timeRemaining = endDate.getTime() - now.getTime();
+
+    if (timeRemaining <= 0) {
+        isPollExpiredRef.value = true;
+    } else {
+        isPollExpiredRef.value = false;
+        timeoutId = setTimeout(() => {
+            isPollExpiredRef.value = true;
+        }, timeRemaining);
+    }
+};
+
+onMounted(() => {
+    setupPostListener(props.post.id);
+    editedText.value = props.post.text;
+    checkPollExpiration(); // Esegui subito il controllo
 });
 
-const isOwner = computed(() => auth.currentUser?.uid === props.post.authorId);
+onUnmounted(() => {
+    if (unsubscribe) unsubscribe();
+    if (timeoutId) clearTimeout(timeoutId);
+});
+
+watch(() => props.post.id, (newId) => {
+    setupPostListener(newId);
+});
+watch(livePost, () => {
+    checkPollExpiration();
+});
+
+const postData = computed(() => livePost.value || props.post);
+const isPollExpired = computed(() => isPollExpiredRef.value);
+
+const isOwner = computed(() => auth.currentUser?.uid === postData.value?.authorId);
 
 const parseMarkdown = (text: string) => {
-    text = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-    text = text.replace(/\|\|(.*?)\|\|/g, '<span class="spoiler-text">$1</span>');
+    // Bold, Italic, Underline, Strikethrough, Spoiler, Highlight
+    text = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>'); // Bold
+    text = text.replace(/\*(.*?)\*/g, '<i>$1</i>');    // Italic
+    text = text.replace(/__(.*?)__/g, '<u>$1</u>');    // Underline
+    text = text.replace(/~~(.*?)~~/g, '<s>$1</s>');    // Strikethrough
+    text = text.replace(/\|\|(.*?)\|\|/g, '<span class="spoiler-text">$1</span>'); // Spoiler
+    text = text.replace(/==#(.*?)==(.*?)==/g, (match, p1, p2) => { // Highlight
+        return `<mark style="background-color: #${p1};">${p2}</mark>`;
+    });
     return text;
 };
 
 const totalVotes = computed(() => {
-  if (!props.post.isPoll || !props.post.pollOptions) return 0;
-  return props.post.pollOptions.reduce((sum, option) => sum + option.votes, 0);
+  if (!postData.value?.isPoll || !postData.value?.pollOptions) return 0;
+  return postData.value.pollOptions.reduce((sum, option) => sum + option.votes, 0);
 });
 
 const userHasVoted = computed(() => {
-    if (!props.post.isPoll || !props.post.pollOptions || !auth.currentUser) return false;
-    return props.post.pollOptions.some(option => option.votedBy?.includes(auth.currentUser.uid));
+    if (!postData.value?.isPoll || !postData.value?.pollOptions || !auth.currentUser) return false;
+    return postData.value.pollOptions.some(option => option.votedBy?.includes(auth.currentUser.uid));
 });
 
 const userVotesIndices = computed(() => {
     if (!userHasVoted.value) return [];
     const indices: number[] = [];
-    if (props.post.pollOptions) {
-        props.post.pollOptions.forEach((option, index) => {
+    if (postData.value?.pollOptions) {
+        postData.value.pollOptions.forEach((option, index) => {
             if (option.votedBy?.includes(auth.currentUser.uid)) {
                 indices.push(index);
             }
@@ -57,15 +120,22 @@ const userVotesIndices = computed(() => {
 });
 
 const showResults = computed(() => {
-  if (!props.post.isPoll) return false;
-  if (!props.post.pollSettings) return true;
-  if (props.post.pollSettings.resultsVisibility === 'always') return true;
-  return userHasVoted.value;
+  if (!postData.value?.isPoll) return false;
+  if (!postData.value?.pollSettings) return true;
+  if (postData.value.pollSettings.resultsVisibility === 'always') return true;
+  return userHasVoted.value || isPollExpired.value;
 });
 
+const handleVoteOnPoll = (selectedIndex: number) => {
+  if (isPollExpired.value) {
+    return;
+  }
+  voteOnPoll(selectedIndex);
+};
+
 const voteOnPoll = async (selectedIndex: number) => {
-  if (!auth.currentUser) return;
-  const postRef = doc(db, "posts", props.post.id);
+  if (!auth.currentUser || !postData.value) return;
+  const postRef = doc(db, "posts", postData.value.id);
   const userId = auth.currentUser.uid;
   
   const postSnap = await getDoc(postRef);
@@ -103,13 +173,13 @@ const voteOnPoll = async (selectedIndex: number) => {
 };
 
 const showVoters = async () => {
-  if (!props.post.pollOptions) return;
+  if (!postData.value?.pollOptions) return;
   isVotersModalOpen.value = true;
-  const allVoterIds = props.post.pollOptions.flatMap(opt => opt.votedBy || []);
+  const allVoterIds = postData.value.pollOptions.flatMap(opt => opt.votedBy || []);
   const uniqueVoterIds = [...new Set(allVoterIds)];
 
   if (uniqueVoterIds.length === 0) {
-    votersList.value = props.post.pollOptions.map(option => ({
+    votersList.value = postData.value.pollOptions.map(option => ({
       optionText: option.text,
       users: []
     }));
@@ -125,24 +195,23 @@ const showVoters = async () => {
     }
   });
 
-  votersList.value = props.post.pollOptions.map(option => ({
+  votersList.value = postData.value.pollOptions.map(option => ({
     optionText: option.text,
     users: (option.votedBy || []).map(id => usersMap.get(id)).filter(Boolean)
   }));
 };
 
-const handleEditClick = () => {
-  isEditing.value = true;
-  editedText.value = props.post.text;
+const handleEditPost = (postId: string) => {
+    router.push({ name: 'CreatePost', params: { postId } });
 };
 
 const handleSaveClick = async () => {
-  if (editedText.value.trim() === props.post.text) {
+  if (!postData.value || editedText.value.trim() === postData.value.text) {
     isEditing.value = false;
     return;
   }
   try {
-    const postRef = doc(db, 'posts', props.post.id);
+    const postRef = doc(db, 'posts', postData.value.id);
     await updateDoc(postRef, {
       text: editedText.value.trim(),
       isEdited: true,
@@ -155,16 +224,18 @@ const handleSaveClick = async () => {
 };
 
 const handleCancelClick = () => {
-  editedText.value = props.post.text;
+  if (postData.value) {
+    editedText.value = postData.value.text;
+  }
   isEditing.value = false;
 };
 
 const handleVote = async (voteType: 'up' | 'down') => {
-  if (!auth.currentUser) return;
-  const postRef = doc(db, "posts", props.post.id);
+  if (!auth.currentUser || !postData.value) return;
+  const postRef = doc(db, "posts", postData.value.id);
   const userId = auth.currentUser.uid;
-  const isUpvoted = props.post.upvotedBy?.includes(userId);
-  const isDownvoted = props.post.downvotedBy?.includes(userId);
+  const isUpvoted = postData.value.upvotedBy?.includes(userId);
+  const isDownvoted = postData.value.downvotedBy?.includes(userId);
 
   if (voteType === 'up') {
     if (isUpvoted) {
@@ -183,19 +254,19 @@ const handleVote = async (voteType: 'up' | 'down') => {
 </script>
 
 <template>
-  <div class="post-detail-card">
+  <div class="post-detail-card" v-if="postData">
     <PostHeader
-      :author-id="post.authorId"
-      :author="post.author"
-      :author-avatar-url="post.authorAvatarUrl"
-      :is-anonymous="post.isAnonymous"
-      :post-id="post.id"
+      :author-id="postData.authorId"
+      :author="postData.author"
+      :author-avatar-url="postData.authorAvatarUrl"
+      :is-anonymous="postData.isAnonymous"
+      :post-id="postData.id"
       @delete-post="emit('delete-post')"
-      @edit-post="handleEditClick"
+      @edit-post="handleEditPost"
     />
     
     <div v-if="!isEditing">
-      <p class="card-text" v-html="parseMarkdown(post.text)"></p>
+      <p class="card-text" v-html="parseMarkdown(postData.text)"></p>
     </div>
     <div v-else>
       <textarea v-model="editedText" class="edit-textarea"></textarea>
@@ -205,22 +276,28 @@ const handleVote = async (voteType: 'up' | 'down') => {
       </div>
     </div>
     
-    <div v-if="post.mediaUrl" class="media-container">
+    <div v-if="postData.mediaUrl" class="media-container">
         <PostMedia 
-            :media-url="post.mediaUrl" 
-            :media-type="post.mediaType" 
-            :is-media-spoiler="post.isMediaSpoiler"
-            :post-id="post.id"
+            :media-url="postData.mediaUrl" 
+            :media-type="postData.mediaType" 
+            :is-media-spoiler="postData.isMediaSpoiler"
+            :post-id="postData.id"
         />
     </div>
 
-    <div v-if="post.isPoll && post.pollOptions" class="poll-container">
+    <div v-if="postData.isPoll && postData.pollOptions" class="poll-container">
+      <div v-if="postData.pollEndDate && !isPollExpired" class="poll-end-date">
+          Scade il: {{ postData.pollEndDate.toDate().toLocaleString() }}
+      </div>
+      <div v-if="isPollExpired" class="poll-expired-message">
+          Sondaggio terminato.
+      </div>
       <div 
-        v-for="(option, index) in post.pollOptions" 
+        v-for="(option, index) in postData.pollOptions" 
         :key="index"
         class="poll-option"
-        :class="{ 'is-voted-by-user': userVotesIndices.includes(index) }"
-        @click="voteOnPoll(index)"
+        :class="{ 'is-voted-by-user': userVotesIndices.includes(index), 'disabled': isPollExpired }"
+        @click="handleVoteOnPoll(index)"
       >
         <div v-if="showResults" class="poll-bar" :style="{ width: `${totalVotes > 0 ? (option.votes / totalVotes) * 100 : 0}%` }"></div>
         <div class="poll-info">
@@ -233,7 +310,7 @@ const handleVote = async (voteType: 'up' | 'down') => {
       </div>
       <div class="poll-footer">
         <span class="total-votes">{{ totalVotes }} voti totali</span>
-        <button v-if="post.pollSettings?.voteVisibility === 'public' && userHasVoted" @click="showVoters" class="view-voters-btn">
+        <button v-if="postData.pollSettings?.voteVisibility === 'public' && userHasVoted" @click="showVoters" class="view-voters-btn">
           <Eye :size="14"/>
           <span>Vedi voti</span>
         </button>
@@ -246,20 +323,20 @@ const handleVote = async (voteType: 'up' | 'down') => {
         <ArrowUp 
           :size="22" 
           class="icon vote-icon" 
-          :class="{ 'upvoted': post.upvotedBy?.includes(auth.currentUser?.uid) }"
+          :class="{ 'upvoted': postData.upvotedBy?.includes(auth.currentUser?.uid) }"
           @click="handleVote('up')" 
         />
-        <span class="score">{{ post.score }} punti</span>
+        <span class="score">{{ postData.score }} punti</span>
         <ArrowDown 
           :size="22" 
           class="icon vote-icon" 
-          :class="{ 'downvoted': post.downvotedBy?.includes(auth.currentUser?.uid) }"
+          :class="{ 'downvoted': postData.downvotedBy?.includes(auth.currentUser?.uid) }"
           @click="handleVote('down')" 
         />
       </div>
       <div class="comments-count">
         <MessageCircle :size="20" class="icon" />
-        <span>{{ post.commentsCount }}</span>
+        <span>{{ postData.commentsCount }}</span>
       </div>
     </div>
     
@@ -282,8 +359,10 @@ const handleVote = async (voteType: 'up' | 'down') => {
       </div>
     </transition>
     <div class="post-meta">
-      <span v-if="post.isEdited" class="edited-label">modificato {{ formatTimeAgo(post.editedAt) }}</span>
-      <span v-else class="created-label">{{ formatTimeAgo(post.createdAt) }}</span>
+      <span class="created-label">
+        {{ formatTimeAgo(postData.createdAt) }}
+        <span v-if="postData.isEdited" class="edited-label"> (modificato {{ formatTimeAgo(postData.editedAt) }})</span>
+      </span>
     </div>
   </div>
 </template>
@@ -297,7 +376,7 @@ const handleVote = async (voteType: 'up' | 'down') => {
   color: #e0e0e0; line-height: 1.6; font-size: 1rem; 
   white-space: pre-wrap; margin-top: 1rem; word-wrap: break-word; 
 }
-.card-text ::v-deep b, .card-text ::v-deep .spoiler-text {
+.card-text ::v-deep b, .card-text ::v_deep .spoiler-text {
   word-break: break-word;
   overflow-wrap: break-word;
 }
@@ -339,7 +418,11 @@ const handleVote = async (voteType: 'up' | 'down') => {
 .spoiler-overlay-media:hover { background-color: rgba(0, 0, 0, 0.8); }
 
 .poll-container { margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.poll-expired-message { text-align: center; color: #ef4444; font-style: italic; font-size: 0.9rem; margin-bottom: 1rem; }
+.poll-end-date { text-align: center; color: #a0a0a0; font-style: italic; font-size: 0.9rem; margin-bottom: 1rem; }
 .poll-option { position: relative; border: 2px solid #363636; background-color: #2a2a2a; border-radius: 8px; overflow: hidden; cursor: pointer; transition: all 0.2s ease; }
+.poll-option.disabled { cursor: not-allowed; opacity: 0.6; }
+.poll-option.disabled:hover { border-color: #363636; }
 .poll-option:hover { border-color: #4f46e5; }
 .poll-option.is-voted-by-user { border-color: #4f46e5; box-shadow: 0 0 10px rgba(79, 70, 229, 0.5); }
 .poll-bar { position: absolute; top: 0; left: 0; height: 100%; background: #4f46e5; opacity: 0.3; transition: width 0.5s cubic-bezier(0.25, 1, 0.5, 1); }
@@ -348,63 +431,117 @@ const handleVote = async (voteType: 'up' | 'down') => {
 .poll-text { min-width: 0; word-break: break-word; }
 .poll-votes { font-size: 0.9rem; color: #a0a0a0; font-weight: bold; flex-shrink: 0; }
 .results-hidden-text { font-size: 0.8rem; text-align: center; color: #a0a0a0; margin-top: 0.5rem; }
-.poll-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; padding: 0 0.5rem; }
+.poll-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 1.5rem; color: #a0a0a0; }
 .total-votes { font-size: 0.8rem; color: #a0a0a0; }
 .view-voters-btn { background: none; border: none; color: #a0a0a0; font-size: 0.8rem; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 0.25rem; transition: color 0.2s; }
 .view-voters-btn:hover { color: #fff; }
 
-.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 1000; backdrop-filter: blur(5px); }
-.modal-container { background-color: #2a2a2a; color: #fff; padding: 1.5rem; border-radius: 12px; width: 90%; max-width: 400px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); position: relative; }
-.close-modal-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: none; border: none; color: #a0a0a0; cursor: pointer; padding: 0.5rem; border-radius: 50%; transition: all 0.2s; }
-.close-modal-btn:hover { background-color: #363636; color: #fff; }
-.modal-container h3 { text-align: center; margin-top: 0; margin-bottom: 1.5rem; }
-.voters-by-option { margin-bottom: 1rem; }
-.voters-by-option h4 { background-color: #363636; padding: 0.5rem; border-radius: 6px; margin: 0 0 0.75rem 0; }
-.voter-list { display: flex; flex-direction: column; gap: 0.5rem; }
-.voter-item { display: flex; align-items: center; gap: 0.75rem; background-color: #1f1f1f; padding: 0.5rem; border-radius: 6px; }
-.voter-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
-.no-votes { font-size: 0.9rem; color: #a0a0a0; text-align: center; }
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(5px);
+}
+
+.modal-container {
+  background-color: #2a2a2a;
+  color: #fff;
+  padding: 1.5rem;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  position: relative;
+}
+
+.close-modal-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: none;
+  border: none;
+  color: #a0a0a0;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.close-modal-btn:hover {
+  background-color: #363636;
+  color: #fff;
+}
+
+.modal-container h3 {
+  text-align: center;
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+}
+
+.voters-by-option {
+  margin-bottom: 1rem;
+}
+
+.voters-by-option h4 {
+  background-color: #363636;
+  padding: 0.5rem;
+  border-radius: 6px;
+  margin: 0 0 0.75rem 0;
+}
+
+.voter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.voter-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background-color: #1f1f1f;
+  padding: 0.5rem;
+  border-radius: 6px;
+}
+
+.voter-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.no-votes {
+  font-size: 0.9rem;
+  color: #a0a0a0;
+  text-align: center;
+}
+
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+}
 
 .post-meta {
   margin-top: 1rem;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  justify-content: flex-end;
   font-size: 0.8rem;
   color: #a0a0a0;
   font-style: italic;
 }
-.edit-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  background-color: #1a1a1a;
-  color: #fff;
-  border: 1px solid #555;
-  border-radius: 4px;
-  padding: 0.75rem;
-  margin-top: 1rem;
-  resize: vertical;
-  min-height: 100px;
-}
-.edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-.cancel-btn, .save-btn {
-  padding: 0.5rem 1rem;
-  border-radius: 999px;
-  border: none;
-  cursor: pointer;
-  font-weight: bold;
-}
-.cancel-btn {
-  background-color: #3a3a3a;
-  color: #a0a0a0;
-}
-.save-btn {
-  background-color: #4CAF50;
-  color: #fff;
+
+.edited-label {
+  margin-left: 0.5rem;
 }
 </style>

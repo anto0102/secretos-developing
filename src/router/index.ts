@@ -8,7 +8,8 @@ import PostCommentsView from '../views/PostCommentsView.vue'; // Importa il comp
 const routes = [
   { path: '/', name: 'Home', component: HomeView },
   { path: '/login', name: 'Login', component: () => import('../views/LoginView.vue') },
-  { path: '/create', name: 'CreatePost', component: () => import('../views/CreatePostView.vue') },
+  // NUOVO: La rotta 'CreatePost' ora accetta un parametro opzionale per la modifica
+  { path: '/create/:postId?', name: 'CreatePost', component: () => import('../views/CreatePostView.vue'), props: true },
   { path: '/search', name: 'Search', component: () => import('../views/SearchView.vue') },
   { path: '/notifications', name: 'Notifications', component: () => import('../views/NotificationsView.vue') },
   { 
@@ -37,7 +38,6 @@ const routes = [
     component: PostView,
     props: true,
   },
-  // Aggiungi questa nuova rotta per la pagina dei commenti
   {
     path: '/post/:postId/comments',
     name: 'PostCommentsView',

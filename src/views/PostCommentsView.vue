@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick } from 'vue';
+import { ref, onMounted, watch, nextTick, onUnmounted } from 'vue';
 import { db, auth } from '../firebase/config';
-import { collection, query, where, orderBy, getDocs, addDoc, doc, updateDoc, increment, deleteDoc, getDoc as getFirestoreDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { collection, query, where, orderBy, getDocs, addDoc, doc, updateDoc, increment, deleteDoc, getDoc as getFirestoreDoc, arrayUnion, arrayRemove, onSnapshot, DocumentSnapshot } from 'firebase/firestore';
 import { type Comment } from '../types';
 import { Loader, Sparkles, Flame } from 'lucide-vue-next';
 import CommentItem from '../components/CommentItem.vue';
@@ -17,6 +17,7 @@ const currentUser = ref<{ username: string, avatarUrl: string } | null>(null);
 const replyingTo = ref<Comment | null>(null);
 const activeFilter = ref<'new' | 'viral'>('new');
 const highlightedCommentId = ref<string | null>(null);
+let unsubscribe: (() => void) | null = null;
 
 const fetchCurrentUser = async () => {
   const user = auth.currentUser;
@@ -30,66 +31,66 @@ const fetchCurrentUser = async () => {
   }
 };
 
-const fetchComments = async (id: string, filter: 'new' | 'viral' = 'new') => {
+const setupCommentsListener = (id: string, filter: 'new' | 'viral' = 'new') => {
     isLoading.value = true;
     errorMsg.value = '';
-    comments.value = [];
-    try {
-        const commentsRef = collection(db, "comments");
-        const orderByField = filter === 'viral' ? 'score' : 'createdAt';
-        const q = query(commentsRef, where("postId", "==", id), orderBy(orderByField, "desc"));
-        const querySnapshot = await getDocs(q);
 
-        const fetchedComments: Comment[] = [];
-        const commentMap = new Map<string, Comment>();
+    const commentsRef = collection(db, "comments");
+    const orderByField = filter === 'viral' ? 'score' : 'createdAt';
+    const q = query(commentsRef, where("postId", "==", id), orderBy(orderByField, "desc"));
 
-        const authorIds = new Set(querySnapshot.docs.map(doc => doc.data().authorId));
-        const userDocs = await Promise.all([...authorIds].map(uid => getFirestoreDoc(doc(db, "users", uid))));
-        const userMap = new Map<string, any>();
-        userDocs.forEach(userDoc => {
-            if (userDoc.exists()) userMap.set(userDoc.id, userDoc.data());
-        });
+    if (unsubscribe) unsubscribe();
 
-        querySnapshot.docs.forEach(d => {
-            const commentData = { ...d.data(), id: d.id, replies: [] } as Comment;
-            const userData = userMap.get(commentData.authorId);
-            commentData.authorUsername = userData?.username || 'Utente Sconosciuto';
-            commentData.authorAvatarUrl = userData?.avatarUrl || '';
-            commentMap.set(commentData.id, commentData);
-        });
+    unsubscribe = onSnapshot(q, async (querySnapshot) => {
+      const fetchedComments: Comment[] = [];
+      const commentMap = new Map<string, Comment>();
 
-        commentMap.forEach(commentData => {
-            if (commentData.parentId) {
-                const parentComment = commentMap.get(commentData.parentId);
-                if (parentComment) {
-                    parentComment.replies.push(commentData);
-                }
-            } else {
-                fetchedComments.push(commentData);
-            }
-        });
+      const authorIds = new Set(querySnapshot.docs.map(doc => doc.data().authorId));
+      const userDocs = await Promise.all([...authorIds].map(uid => getFirestoreDoc(doc(db, "users", uid))));
+      const userMap = new Map<string, any>();
+      userDocs.forEach(userDoc => {
+          if (userDoc.exists()) userMap.set(userDoc.id, userDoc.data());
+      });
 
-        comments.value = fetchedComments;
-        
-        if (props.commentId) {
-            highlightedCommentId.value = props.commentId;
-            await nextTick();
-            const el = document.getElementById(`comment-${props.commentId}`);
-            if (el) {
-                el.scrollIntoView({ behavior: 'smooth' });
-                el.classList.add('highlighted');
-                setTimeout(() => {
-                  el.classList.remove('highlighted');
-                }, 3000);
-            }
-        }
+      querySnapshot.docs.forEach(d => {
+          const commentData = { ...d.data(), id: d.id, replies: [] } as Comment;
+          const userData = userMap.get(commentData.authorId);
+          commentData.authorUsername = userData?.username || 'Utente Sconosciuto';
+          commentData.authorAvatarUrl = userData?.avatarUrl || '';
+          commentMap.set(commentData.id, commentData);
+      });
 
-    } catch (e) {
+      commentMap.forEach(commentData => {
+          if (commentData.parentId) {
+              const parentComment = commentMap.get(commentData.parentId);
+              if (parentComment) {
+                  parentComment.replies.push(commentData);
+              }
+          } else {
+              fetchedComments.push(commentData);
+          }
+      });
+      
+      comments.value = fetchedComments;
+      isLoading.value = false;
+
+      if (props.commentId) {
+          highlightedCommentId.value = props.commentId;
+          await nextTick();
+          const el = document.getElementById(`comment-${props.commentId}`);
+          if (el) {
+              el.scrollIntoView({ behavior: 'smooth' });
+              el.classList.add('highlighted');
+              setTimeout(() => {
+                el.classList.remove('highlighted');
+              }, 3000);
+          }
+      }
+    }, (e) => {
         errorMsg.value = "Errore nel caricamento dei commenti.";
         console.error(e);
-    } finally {
         isLoading.value = false;
-    }
+    });
 };
 
 const submitComment = async (text: string) => {
@@ -129,26 +130,11 @@ const submitComment = async (text: string) => {
         }
 
         await updateDoc(postRef, { commentsCount: increment(1) });
-        await fetchComments(props.postId, activeFilter.value);
         replyingTo.value = null;
     } catch (e) {
         errorMsg.value = "Errore nell'invio del commento.";
         console.error(e);
     }
-};
-
-const findAndUpdateComment = (commentsArray: Comment[], commentId: string, newScore: number, upvotedBy: string[], downvotedBy: string[]) => {
-  for (const comment of commentsArray) {
-    if (comment.id === commentId) {
-      comment.score = newScore;
-      comment.upvotedBy = upvotedBy;
-      comment.downvotedBy = downvotedBy;
-      return;
-    }
-    if (comment.replies) {
-      findAndUpdateComment(comment.replies, commentId, newScore, upvotedBy, downvotedBy);
-    }
-  }
 };
 
 const voteComment = async (payload: { commentId: string, voteType: 'up' | 'down' }) => {
@@ -196,8 +182,6 @@ const voteComment = async (payload: { commentId: string, voteType: 'up' | 'down'
     }
     
     await updateDoc(commentRef, { upvotedBy: newUpvotedBy, downvotedBy: newDownvotedBy, score: newScore });
-    
-    findAndUpdateComment(comments.value, payload.commentId, newScore, newUpvotedBy, newDownvotedBy);
 };
 
 const deleteComment = async (commentId: string) => {
@@ -207,8 +191,6 @@ const deleteComment = async (commentId: string) => {
     await deleteDoc(commentRef);
     const postRef = doc(db, "posts", props.postId);
     await updateDoc(postRef, { commentsCount: increment(-1) });
-
-    await fetchComments(props.postId, activeFilter.value);
   } catch (error) {
     console.error("Errore durante l'eliminazione del commento:", error);
   }
@@ -224,15 +206,19 @@ const cancelReply = () => {
 
 onMounted(() => {
     fetchCurrentUser();
-    fetchComments(props.postId);
+    setupCommentsListener(props.postId);
+});
+
+onUnmounted(() => {
+    if (unsubscribe) unsubscribe();
 });
 
 watch(activeFilter, (newFilter) => {
-  fetchComments(props.postId, newFilter);
+  setupCommentsListener(props.postId, newFilter);
 });
 
 watch(() => props.postId, (newId) => {
-    fetchComments(newId, activeFilter.value);
+    setupCommentsListener(newId, activeFilter.value);
 });
 </script>
 

@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { db, auth } from '../firebase/config';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { ArrowLeft, Loader } from 'lucide-vue-next';
 import { type Post } from '../types';
 
@@ -15,33 +15,34 @@ const router = useRouter();
 const post = ref<Post | null>(null);
 const isLoading = ref(true);
 const errorMsg = ref('');
+let unsubscribe: (() => void) | null = null;
 
-const fetchPost = async (id: string) => {
+const setupPostListener = (id: string) => {
     isLoading.value = true;
     errorMsg.value = '';
-    
-    try {
-        const postDocRef = doc(db, 'posts', id);
-        const postDocSnap = await getDoc(postDocRef);
 
+    const postDocRef = doc(db, 'posts', id);
+
+    unsubscribe = onSnapshot(postDocRef, async (postDocSnap) => {
         if (postDocSnap.exists()) {
-            post.value = { id: postDocSnap.id, ...postDocSnap.data() } as Post;
-            if (post.value.authorId) {
-                const userDocRef = doc(db, 'users', post.value.authorId);
+            const postData = { id: postDocSnap.id, ...postDocSnap.data() } as Post;
+            if (postData.authorId) {
+                const userDocRef = doc(db, 'users', postData.authorId);
                 const userDocSnap = await getDoc(userDocRef);
                 if (userDocSnap.exists()) {
-                    post.value.authorAvatarUrl = userDocSnap.data().avatarUrl;
+                    postData.authorAvatarUrl = userDocSnap.data().avatarUrl;
                 }
             }
+            post.value = postData;
         } else {
             errorMsg.value = "Post non trovato.";
         }
-    } catch (error) {
+        isLoading.value = false;
+    }, (error) => {
         console.error("Errore nel caricamento del post:", error);
         errorMsg.value = "Errore nel caricamento del post.";
-    } finally {
         isLoading.value = false;
-    }
+    });
 };
 
 const handleDeletePost = () => {
@@ -49,11 +50,16 @@ const handleDeletePost = () => {
 };
 
 onMounted(() => {
-    fetchPost(props.postId);
+    setupPostListener(props.postId);
+});
+
+onUnmounted(() => {
+    if (unsubscribe) unsubscribe();
 });
 
 watch(() => props.postId, (newId) => {
-    fetchPost(newId);
+    if (unsubscribe) unsubscribe();
+    setupPostListener(newId);
 });
 </script>
 

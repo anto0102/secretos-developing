@@ -39,7 +39,7 @@ const toggleMenu = () => {
       <MoreHorizontal :size="20" class="icon" @click.stop="toggleMenu" />
       <transition name="fade">
         <div v-if="isMenuOpen" class="dropdown-menu" @mouseleave="isMenuOpen = false">
-          <button @click="emit('edit-post')" class="menu-item edit-item">
+          <button @click="$emit('edit-post', postId)" class="menu-item edit-item">
             <Pencil :size="16" /><span>Modifica</span>
           </button>
           <button @click="emit('delete-post')" class="menu-item delete-item">

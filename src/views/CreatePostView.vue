@@ -2,16 +2,46 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { db, auth, storage } from '../firebase/config';
-import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
-import { Loader, ArrowLeft, Settings, Image as ImageIcon, X, Bold, EyeOff } from 'lucide-vue-next';
+import { 
+    collection, 
+    addDoc, 
+    serverTimestamp, 
+    doc, 
+    getDoc, 
+    Timestamp, 
+    updateDoc 
+} from 'firebase/firestore';
+import { 
+    Loader, 
+    ArrowLeft, 
+    Settings, 
+    Image as ImageIcon, 
+    X, 
+    Bold, 
+    EyeOff,
+    Italic,
+    Underline,
+    Strikethrough,
+    Highlighter
+} from 'lucide-vue-next';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { type Post } from '../types';
+
+const props = defineProps<{
+    postId?: string;
+}>();
 
 const router = useRouter();
 const postText = ref('');
 const errorMsg = ref('');
 const isLoading = ref(false);
 
-const currentUser = ref<{ username: string; avatarUrl: string; birthdate?: string; gender?: string; } | null>(null);
+const currentUser = ref<{ 
+    username: string; 
+    avatarUrl: string; 
+    birthdate?: string; 
+    gender?: string; 
+} | null>(null);
 
 const isSettingsOpen = ref(false);
 const isAnonymous = ref(false);
@@ -23,17 +53,43 @@ const pollSettings = ref({
   resultsVisibility: 'always',
   voteVisibility: 'public'
 });
+const hasPollEndDate = ref(false);
+const pollEndDate = ref<string>('');
+const highlightColor = ref('#FFFF00');
+
 
 const MAX_CHARS = 500;
 const MAX_POLL_OPTIONS = 5;
+
+const isEditMode = computed(() => !!props.postId);
 
 const selectedMediaFile = ref<File | null>(null);
 const mediaPreviewUrl = ref<string | null>(null);
 const mediaType = ref<'image' | 'video' | null>(null);
 const mediaInputRef = ref<HTMLInputElement | null>(null);
 
+const showSnackbar = ref(false);
+const snackbarMessage = ref("");
+let snackbarTimeout: number | null = null;
+
+const displaySnackbar = (message: string) => {
+  snackbarMessage.value = message;
+  showSnackbar.value = true;
+  if(snackbarTimeout) clearTimeout(snackbarTimeout);
+  snackbarTimeout = setTimeout(() => {
+    showSnackbar.value = false;
+  }, 3000);
+};
+
 const triggerFileInput = () => {
-  if (isPoll.value) return;
+  if (isEditMode.value) {
+    displaySnackbar("Non puoi modificare media e sondaggi di un post esistente.");
+    return;
+  }
+  if (isPoll.value) {
+    displaySnackbar("Non puoi aggiungere media se il post è un sondaggio.");
+    return;
+  }
   mediaInputRef.value?.click();
 };
 
@@ -68,8 +124,41 @@ const applyMarkdown = (syntax: string) => {
   const start = textarea.selectionStart;
   const end = textarea.selectionEnd;
   const selectedText = postText.value.substring(start, end);
-  const newText = postText.value.substring(0, start) + syntax + selectedText + syntax + postText.value.substring(end);
+  let newText = "";
+  if (syntax === "highlight") {
+    newText = postText.value.substring(0, start) + `==${highlightColor.value}==` + selectedText + `==` + postText.value.substring(end);
+  } else {
+    newText = postText.value.substring(0, start) + syntax + selectedText + syntax + postText.value.substring(end);
+  }
+  
   postText.value = newText;
+};
+
+const fetchPostToEdit = async (id: string) => {
+    isLoading.value = true;
+    const postRef = doc(db, "posts", id);
+    const postSnap = await getDoc(postRef);
+
+    if (postSnap.exists()) {
+        const postData = postSnap.data() as Post;
+        postText.value = postData.text;
+        
+        isAnonymous.value = postData.isAnonymous || false;
+        
+        // Disabilitiamo le opzioni di modifica
+        isPoll.value = postData.isPoll || false;
+        isMediaSpoiler.value = postData.isMediaSpoiler || false;
+        
+        if (postData.mediaUrl) {
+            mediaPreviewUrl.value = postData.mediaUrl;
+            mediaType.value = postData.mediaType || 'image';
+        }
+
+    } else {
+        errorMsg.value = "Post non trovato per la modifica.";
+        router.push('/');
+    }
+    isLoading.value = false;
 };
 
 onMounted(async () => {
@@ -86,6 +175,10 @@ onMounted(async () => {
         gender: data.gender
       };
     }
+  }
+
+  if(isEditMode.value && props.postId) {
+      await fetchPostToEdit(props.postId);
   }
 });
 
@@ -137,10 +230,16 @@ const removePollOption = (index: number) => {
 };
 
 watch(isPoll, (newVal) => {
+  if (isEditMode.value) {
+    displaySnackbar("Non puoi modificare sondaggi o media di un post esistente.");
+    return;
+  }
   if (newVal) {
     clearMedia();
   } else {
     pollOptions.value = [{ text: '' }, { text: '' }];
+    hasPollEndDate.value = false;
+    pollEndDate.value = '';
   }
 });
 watch(selectedMediaFile, (newVal) => {
@@ -149,9 +248,19 @@ watch(selectedMediaFile, (newVal) => {
     }
 });
 watch(isMediaSpoiler, (newVal) => {
+    if (isEditMode.value) {
+      displaySnackbar("Non puoi modificare sondaggi o media di un post esistente.");
+      return;
+    }
     if (newVal) {
         isPoll.value = false;
     }
+});
+watch(isAnonymous, (newVal, oldVal) => {
+  if (isEditMode.value && newVal !== oldVal) {
+    displaySnackbar("Non puoi modificare le impostazioni di anonimato di un post esistente.");
+    isAnonymous.value = oldVal;
+  }
 });
 
 const submitPost = async () => {
@@ -166,7 +275,7 @@ const submitPost = async () => {
   errorMsg.value = '';
 
   let mediaUrl = null;
-  if (selectedMediaFile.value) {
+  if (!isEditMode.value && selectedMediaFile.value) {
     const filePath = `posts/${user.uid}/${Date.now()}_${selectedMediaFile.value.name}`;
     const fileRef = storageRef(storage, filePath);
     try {
@@ -181,35 +290,45 @@ const submitPost = async () => {
   }
 
   try {
-    const postData: any = {
-      text: postText.value,
-      author: authorName.value,
-      authorId: user.uid,
-      isAnonymous: isAnonymous.value,
-      score: 0,
-      commentsCount: 0,
-      createdAt: serverTimestamp(),
-      upvotedBy: [],
-      downvotedBy: [],
-      mediaUrl: mediaUrl,
-      mediaType: mediaType.value,
-      isMediaSpoiler: isMediaSpoiler.value
-    };
+    if (isEditMode.value && props.postId) {
+        await updateDoc(doc(db, "posts", props.postId), {
+            text: postText.value,
+            isEdited: true,
+            editedAt: serverTimestamp(),
+        });
+    } else {
+        const newPostData: any = {
+            text: postText.value,
+            isAnonymous: isAnonymous.value,
+            author: authorName.value,
+            authorId: user.uid,
+            score: 0,
+            commentsCount: 0,
+            createdAt: serverTimestamp(),
+            upvotedBy: [],
+            downvotedBy: [],
+            mediaUrl: mediaUrl,
+            mediaType: mediaType.value,
+            isMediaSpoiler: isMediaSpoiler.value
+        };
 
-    if (isPoll.value) {
-      postData.isPoll = true;
-      postData.pollOptions = pollOptions.value
-        .filter(opt => opt.text.trim() !== '')
-        .map(opt => ({ text: opt.text, votes: 0, votedBy: [] }));
-      postData.pollSettings = pollSettings.value;
+        if (isPoll.value) {
+            newPostData.isPoll = true;
+            newPostData.pollOptions = pollOptions.value
+              .filter(opt => opt.text.trim() !== '')
+              .map(opt => ({ text: opt.text, votes: 0, votedBy: [] }));
+            newPostData.pollSettings = pollSettings.value;
+            if (hasPollEndDate.value && pollEndDate.value) {
+                newPostData.pollEndDate = Timestamp.fromDate(new Date(pollEndDate.value));
+            }
+        }
+        await addDoc(collection(db, "posts"), newPostData);
     }
 
-    await addDoc(collection(db, "posts"), postData);
-    
     router.push('/');
   } catch (error) {
-    console.error("Errore durante la creazione del post:", error);
-    errorMsg.value = "C'è stato un problema durante la pubblicazione del post.";
+    console.error("Errore durante la pubblicazione/modifica del post:", error);
+    errorMsg.value = "C'è stato un problema durante l'operazione.";
   } finally {
     isLoading.value = false;
   }
@@ -221,7 +340,7 @@ const submitPost = async () => {
     <div class="create-post-container" :class="{ 'settings-open': isSettingsOpen }">
       <header class="main-header">
         <button @click="router.back()" class="header-btn"><ArrowLeft :size="22" /></button>
-        <h1 class="page-title">Nuovo Post</h1>
+        <h1 class="page-title">{{ isEditMode ? 'Modifica Post' : 'Nuovo Post' }}</h1>
         <button @click="isSettingsOpen = !isSettingsOpen" class="header-btn" :class="{ active: isSettingsOpen }"><Settings :size="22" /></button>
       </header>
       
@@ -240,7 +359,14 @@ const submitPost = async () => {
             ></textarea>
             <div class="markdown-toolbar">
                 <button type="button" @click="applyMarkdown('**')"><Bold :size="20" /></button>
+                <button type="button" @click="applyMarkdown('*')"><Italic :size="20" /></button>
+                <button type="button" @click="applyMarkdown('~~')"><Strikethrough :size="20" /></button>
+                <button type="button" @click="applyMarkdown('__')"><Underline :size="20" /></button>
                 <button type="button" @click="applyMarkdown('||')"><EyeOff :size="20" /></button>
+                <div class="color-picker-wrapper">
+                    <input type="color" v-model="highlightColor" class="color-picker" />
+                    <button type="button" @click="applyMarkdown('highlight')"><Highlighter :size="20" /></button>
+                </div>
             </div>
             <div class="char-counter" :class="{ 'is-warning': charsRemaining < 20, 'is-error': charsRemaining < 0 }">
               {{ charsRemaining }}
@@ -251,7 +377,7 @@ const submitPost = async () => {
             <div v-if="mediaPreviewUrl" class="media-preview">
               <img v-if="mediaType === 'image'" :src="mediaPreviewUrl" alt="Anteprima media" />
               <video v-else-if="mediaType === 'video'" :src="mediaPreviewUrl" controls></video>
-              <button type="button" @click="clearMedia" class="clear-media-btn"><X :size="20" /></button>
+              <button v-if="!isEditMode" type="button" @click="clearMedia" class="clear-media-btn"><X :size="20" /></button>
             </div>
           </transition>
 
@@ -265,25 +391,33 @@ const submitPost = async () => {
                     v-model="option.text"
                     :placeholder="`Opzione ${index + 1}`"
                     maxlength="50"
+                    :disabled="isEditMode"
                   />
-                  <button v-if="index > 1" @click.prevent="removePollOption(index)" class="remove-option-btn">
+                  <button v-if="!isEditMode && index > 1" @click.prevent="removePollOption(index)" class="remove-option-btn">
                     <X :size="18" />
                   </button>
                 </div>
               </transition-group>
               <button
-                v-if="pollOptions.length < MAX_POLL_OPTIONS"
+                v-if="!isEditMode && pollOptions.length < MAX_POLL_OPTIONS"
                 @click.prevent="addPollOption"
                 class="add-option-btn"
               >
                 Aggiungi Opzione
               </button>
+              <div v-if="!isEditMode" class="poll-end-date-selector">
+                <div class="setting-item">
+                    <div class="setting-label"><strong>Data di fine</strong></div>
+                    <label class="switch"><input type="checkbox" v-model="hasPollEndDate"><span class="slider"></span></label>
+                </div>
+                <input v-if="hasPollEndDate" type="datetime-local" v-model="pollEndDate" />
+              </div>
             </div>
           </transition>
 
           <div v-if="errorMsg" class="error-message">{{ errorMsg }}</div>
           <button type="submit" :disabled="isLoading || !isFormValid" class="submit-btn">
-            <span v-if="!isLoading">Pubblica</span>
+            <span v-if="!isLoading">{{ isEditMode ? 'Salva modifiche' : 'Pubblica' }}</span>
             <Loader v-else :size="20" class="spinner" />
           </button>
         </form>
@@ -294,24 +428,34 @@ const submitPost = async () => {
       <h3 class="panel-title">Opzioni Post</h3>
       <div class="setting-item">
         <div class="setting-label"><strong>Post Anonimo</strong><p>Nascondi il tuo username.</p></div>
-        <label class="switch"><input type="checkbox" v-model="isAnonymous"><span class="slider"></span></label>
+        <label class="switch">
+          <input type="checkbox" v-model="isAnonymous" :disabled="isEditMode" @click.stop="isEditMode && displaySnackbar('Non puoi modificare le impostazioni di anonimato di un post esistente.')">
+          <span class="slider" :class="{'disabled-slider': isEditMode}"></span>
+        </label>
       </div>
       <div class="divider"></div>
       <h3 class="panel-title">Aggiungi al post</h3>
       
       <div class="setting-item">
         <div class="setting-label"><strong>Crea Sondaggio</strong><p>Trasforma il post in un sondaggio.</p></div>
-        <label class="switch"><input type="checkbox" v-model="isPoll" :disabled="!!selectedMediaFile"><span class="slider"></span></label>
+        <label class="switch">
+          <input type="checkbox" v-model="isPoll" :disabled="isEditMode || !!selectedMediaFile" @click.stop="isEditMode && displaySnackbar('Non puoi modificare sondaggi o media di un post esistente.')">
+          <span class="slider" :class="{'disabled-slider': isEditMode || !!selectedMediaFile}"></span>
+        </label>
       </div>
       
-      <button type="button" @click="triggerFileInput" class="panel-button" :disabled="isPoll || !!selectedMediaFile">
+      <button type="button" @click="triggerFileInput" class="panel-button" :disabled="isEditMode || isPoll || !!selectedMediaFile">
         <ImageIcon :size="20" /><span>Aggiungi Media</span>
+        <div v-if="isEditMode" class="locked-icon"><Lock :size="18" /></div>
       </button>
       <input type="file" ref="mediaInputRef" @change="handleMediaSelect" accept="image/*,video/*" style="display: none;" />
       <transition name="fade">
         <div v-if="selectedMediaFile" class="setting-item spoiler-media-setting">
             <div class="setting-label"><strong>Oscura media</strong><p>Rende l'immagine o il video sfocato.</p></div>
-            <label class="switch"><input type="checkbox" v-model="isMediaSpoiler"><span class="slider"></span></label>
+            <label class="switch">
+              <input type="checkbox" v-model="isMediaSpoiler" :disabled="isEditMode" @click.stop="isEditMode && displaySnackbar('Non puoi modificare sondaggi o media di un post esistente.')">
+              <span class="slider" :class="{'disabled-slider': isEditMode}"></span>
+            </label>
         </div>
       </transition>
       
@@ -340,8 +484,13 @@ const submitPost = async () => {
           </div>
         </div>
       </transition>
-
     </aside>
+    
+    <transition name="fade">
+      <div v-if="showSnackbar" class="snackbar-message">
+        {{ snackbarMessage }}
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -358,7 +507,7 @@ const submitPost = async () => {
 .user-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
 .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
 .username { font-weight: bold; }
-.textarea-wrapper { position: relative; margin-bottom: 1rem; }
+.textarea-wrapper { position: relative; display: flex; flex-direction: column; gap: 1rem; padding-bottom: 3.5rem; }
 textarea { width: 100%; min-height: 120px; background: transparent; color: #e0e0e0; border: none; font-size: 1.5rem; resize: vertical; padding: 0.5rem; box-sizing: border-box; outline: none; }
 .char-counter { position: absolute; bottom: 0.5rem; right: 0.5rem; font-size: 0.8rem; color: #a0a0a0; }
 .char-counter.is-warning { color: #f59e0b; }
@@ -374,7 +523,7 @@ textarea { width: 100%; min-height: 120px; background: transparent; color: #e0e0
 .setting-label strong { display: block; color: #fff; }
 .setting-label p { font-size: 0.8rem; color: #a0a0a0; margin: 0; }
 .divider { height: 1px; background-color: #363636; margin: 1.5rem 0; }
-.panel-button { width: 100%; display: flex; align-items: center; gap: 0.75rem; background-color: #363636; border: none; color: #fff; padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; cursor: pointer; transition: background-color 0.2s; }
+.panel-button { width: 100%; display: flex; align-items: center; gap: 0.75rem; background-color: #363636; border: none; color: #fff; padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; cursor: pointer; transition: background-color 0.2s; position: relative; }
 .panel-button:hover { background-color: #444; }
 .panel-button:disabled { cursor: not-allowed; opacity: 0.5; }
 .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
@@ -383,6 +532,8 @@ textarea { width: 100%; min-height: 120px; background: transparent; color: #e0e0
 .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
 input:checked + .slider { background-color: #4f46e5; }
 input:checked + .slider:before { transform: translateX(20px); }
+.slider.disabled-slider { background-color: #444; cursor: not-allowed; }
+.slider.disabled-slider:before { background-color: #666; }
 .spinner { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .error-message { color: #ef4444; margin-top: 1rem; text-align: center; }
@@ -443,12 +594,17 @@ input:checked + .slider:before { transform: translateX(20px); }
   transform: scale(1.1);
 }
 .markdown-toolbar {
-    display: flex;
-    gap: 0.5rem;
     position: absolute;
-    bottom: 0.5rem;
-    left: 0.5rem;
-    z-index: 10;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background-color: #1a1a1a;
+    border-top: 1px solid #363636;
+    z-index: 1;
 }
 .markdown-toolbar button {
     background: #363636;
@@ -462,9 +618,83 @@ input:checked + .slider:before { transform: translateX(20px); }
     background-color: #444;
     color: #fff;
 }
+.color-picker-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.color-picker {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    width: 28px;
+    height: 28px;
+    background-color: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    border-radius: 4px;
+    overflow: hidden;
+}
+.color-picker::-webkit-color-swatch {
+    border: none;
+    border-radius: 4px;
+}
+.color-picker::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
 .spoiler-media-setting {
     margin-top: 1.5rem;
     border-top: 1px solid #363636;
     padding-top: 1.5rem;
+}
+.poll-end-date-selector {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.poll-end-date-selector label {
+  color: #ccc;
+  font-size: 0.9rem;
+  font-weight: bold;
+}
+.poll-end-date-selector input {
+  background-color: #1a1a1a;
+  border: 1px solid #363636;
+  border-radius: 6px;
+  padding: 0.5rem;
+  color: #fff;
+}
+.snackbar-message {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #333;
+  color: #fff;
+  padding: 0.75rem 1.5rem;
+  border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  z-index: 100;
+  opacity: 0;
+  animation: fade-in-out 3.5s forwards;
+}
+
+@keyframes fade-in-out {
+  0% { opacity: 0; transform: translateY(20px); }
+  10% { opacity: 1; transform: translateY(0); }
+  90% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(20px); }
+}
+.locked-icon {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #777;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 </style>
