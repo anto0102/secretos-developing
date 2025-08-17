@@ -10,14 +10,15 @@ const props = defineProps({
   isOwner: Boolean,
 });
 
-const emit = defineEmits(['triggerFileUpload', 'update:activeTab']);
+// Corretto: ora emette anche open-settings-menu
+const emit = defineEmits(['triggerFileUpload', 'update:activeTab', 'openSettingsMenu']);
 
 const handleTriggerFileUpload = (type: string) => {
     emit('triggerFileUpload', type);
 };
 
 const handleUpdateActiveTab = (tab: string) => {
-    emit('update:active-tab', tab);
+    emit('update:activeTab', tab);
 };
 </script>
 
@@ -26,17 +27,20 @@ const handleUpdateActiveTab = (tab: string) => {
     <Banner
       :banner-url="userProfile?.bannerUrl"
       :is-uploading="isUploading"
-      :is-owner="isOwner" @trigger-file-upload="handleTriggerFileUpload"
+      :is-owner="isOwner"
+      @trigger-file-upload="handleTriggerFileUpload"
     />
     
     <div class="user-info-wrapper">
-        <UserInfo
-            :user-profile="userProfile"
-            :is-uploading="isUploading"
-            :active-tab="activeTab"
-            :is-owner="isOwner" @trigger-file-upload="handleTriggerFileUpload"
-            @update:active-tab="handleUpdateActiveTab"
-        />
+      <UserInfo
+        :user-profile="userProfile"
+        :is-uploading="isUploading"
+        :active-tab="activeTab"
+        :is-owner="isOwner"
+        @trigger-file-upload="handleTriggerFileUpload"
+        @update:active-tab="handleUpdateActiveTab"
+        @open-settings-menu="emit('openSettingsMenu')"
+      />
     </div>
   </header>
 </template>

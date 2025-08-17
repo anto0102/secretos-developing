@@ -98,7 +98,7 @@ const fetchComments = async (id: string, filter: 'new' | 'viral' = 'new') => {
             if (commentData.parentId) {
                 const parentComment = commentMap.get(commentData.parentId);
                 if (parentComment) {
-                    parentComment.replies.push(commentData);
+                    parentComment.replies!.push(commentData);
                 }
             } else {
                 fetchedComments.push(commentData);
@@ -154,27 +154,43 @@ const submitComment = async (text: string) => {
             const postData = postSnap.data();
             const postAuthorId = postData.authorId;
             
-            let notificationAuthorName = currentUser.value.username;
-            if (postAuthorDetails.value?.isAnonymous && postAuthorDetails.value?.id === user.uid) {
-                const age = postAuthorDetails.value.birthdate ? `di ${calculateAge(postAuthorDetails.value.birthdate)} anni` : '';
-                let gender = '';
-                if (postAuthorDetails.value.gender === 'male') gender = 'Uomo';
-                else if (postAuthorDetails.value.gender === 'female') gender = 'Donna';
-                else gender = 'Persona';
-                notificationAuthorName = `${gender} ${age}`.trim();
-            }
-            
-            let notificationText = `${notificationAuthorName} ha commentato il tuo post.`;
+            const notificationAuthorName = currentUser.value.username; // Usa sempre il nome utente reale per le notifiche
+            const notifiedUsers = new Set<string>(); // Per non notificare lo stesso utente più volte
+
+            // Notifica per commento/risposta
             if (replyingTo.value) {
-                notificationText = `${notificationAuthorName} ha risposto al tuo commento.`;
-            }
-
-            if (postAuthorId !== user.uid) {
+                if (replyingTo.value.authorId !== user.uid) {
+                  const notificationText = `${notificationAuthorName} ha risposto al tuo commento.`;
+                  await createNotification(replyingTo.value.authorId, 'reply', props.postId, notificationText, newCommentRef.id);
+                  notifiedUsers.add(replyingTo.value.authorId);
+                }
+            } else if (postAuthorId !== user.uid) {
+                const notificationText = `${notificationAuthorName} ha commentato il tuo post.`;
                 await createNotification(postAuthorId, 'comment', props.postId, notificationText, newCommentRef.id);
+                notifiedUsers.add(postAuthorId);
             }
 
-            if (replyingTo.value && replyingTo.value.authorId !== user.uid) {
-                await createNotification(replyingTo.value.authorId, 'reply', props.postId, notificationText, newCommentRef.id);
+            // Notifiche per mention
+            const mentionRegex = /@(\w+)/g;
+            const mentionedUsernames = [...new Set(text.match(mentionRegex)?.map(m => m.substring(1)))];
+            if (mentionedUsernames.length > 0) {
+                const usersRef = collection(db, "users");
+                const q = query(usersRef, where("username", "in", mentionedUsernames));
+                const usersSnapshot = await getDocs(q);
+                
+                usersSnapshot.forEach(userDoc => {
+                    const mentionedUserId = userDoc.id;
+                    if (mentionedUserId !== user.uid && !notifiedUsers.has(mentionedUserId)) {
+                        createNotification(
+                            mentionedUserId,
+                            'mention',
+                            props.postId,
+                            `${notificationAuthorName} ti ha menzionato in un commento.`,
+                            newCommentRef.id
+                        );
+                        notifiedUsers.add(mentionedUserId);
+                    }
+                });
             }
         }
 

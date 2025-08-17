@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { defineProps, defineEmits } from 'vue';
+import { defineProps, defineEmits, ref, watch } from 'vue';
 import { Pencil, Music, Film, Book, User, Calendar, Star, Gamepad2, Dumbbell, UserRound, Venus, Mars } from 'lucide-vue-next';
 import FavoritesEditor from './FavoritesEditor.vue';
+import { parseText, handleMentionClick } from '../utils/textParser'; // <-- CORRETTO: import di parseText
+import { useRouter } from 'vue-router';
 
 const props = defineProps({
   userProfile: Object,
@@ -12,13 +14,27 @@ const props = defineProps({
 
 const emit = defineEmits(['openEditor', 'saveChanges', 'cancelEdit', 'update:editableData', 'update-and-save-field']);
 
+const parsedBio = ref('');
+const router = useRouter();
+
+watch(() => props.userProfile?.bio, async (newBio) => {
+    if (newBio) {
+        parsedBio.value = await parseText(newBio); // <-- CORRETTO: usa parseText
+    } else {
+        parsedBio.value = 'Nessuna bio impostata.';
+    }
+}, { immediate: true });
+
+const onBioClick = (event: MouseEvent) => {
+  handleMentionClick(event, router);
+};
+
 const updateData = (field: string, value: any) => {
   const newData = { ...props.editableData, [field]: value };
   emit('update:editableData', newData);
 };
 
 const updateGender = (gender: 'male' | 'female' | 'nonbinary') => {
-  // Emettiamo l'evento speciale per l'aggiornamento e salvataggio diretto
   emit('update-and-save-field', { field: 'gender', value: gender });
 };
 </script>
@@ -28,11 +44,11 @@ const updateGender = (gender: 'male' | 'female' | 'nonbinary') => {
     <div class="section-box">
       <h3 class="section-header"><User :size="20" class="header-icon" /> Bio</h3>
       <div v-if="editingSection !== 'bio'">
-        <p class="bio-text">{{ userProfile?.bio || 'Nessuna bio impostata.' }}</p>
+        <p class="bio-text" @click="onBioClick" v-html="parsedBio"></p>
         <button v-if="isOwner" @click="emit('openEditor', 'bio')" class="edit-btn inner-edit-btn"><Pencil :size="16" /></button>
       </div>
       <div v-else>
-        <textarea :value="editableData.bio" @input="updateData('bio', $event.target.value)" maxlength="300"></textarea>
+        <textarea :value="editableData.bio" @input="updateData('bio', ($event.target as HTMLTextAreaElement).value)" maxlength="300"></textarea>
         <div class="edit-actions">
           <button @click="emit('cancelEdit')" class="action-btn cancel-btn">Annulla</button>
           <button @click="emit('saveChanges')" class="action-btn save-btn">Salva</button>
@@ -91,7 +107,7 @@ const updateGender = (gender: 'male' | 'female' | 'nonbinary') => {
           <button v-if="isOwner" @click="emit('openEditor', 'pronouns')" class="edit-btn inner-edit-btn"><Pencil :size="16" /></button>
         </div>
         <div v-else>
-          <input type="text" :value="editableData.pronouns" @input="updateData('pronouns', $event.target.value)" placeholder="lui/egli, lei/ella...">
+          <input type="text" :value="editableData.pronouns" @input="updateData('pronouns', ($event.target as HTMLInputElement).value)" placeholder="lui/egli, lei/ella...">
           <div class="edit-actions">
             <button @click="emit('cancelEdit')" class="action-btn cancel-btn">Annulla</button>
             <button @click="emit('saveChanges')" class="action-btn save-btn">Salva</button>
@@ -105,7 +121,7 @@ const updateGender = (gender: 'male' | 'female' | 'nonbinary') => {
           <button v-if="isOwner" @click="emit('openEditor', 'birthdate')" class="edit-btn inner-edit-btn"><Pencil :size="16" /></button>
         </div>
         <div v-else>
-          <input type="date" :value="editableData.birthdate" @input="updateData('birthdate', $event.target.value)">
+          <input type="date" :value="editableData.birthdate" @input="updateData('birthdate', ($event.target as HTMLInputElement).value)">
           <div class="edit-actions">
             <button @click="emit('cancelEdit')" class="action-btn cancel-btn">Annulla</button>
             <button @click="emit('saveChanges')" class="action-btn save-btn">Salva</button>
@@ -119,7 +135,7 @@ const updateGender = (gender: 'male' | 'female' | 'nonbinary') => {
           <button v-if="isOwner" @click="emit('openEditor', 'videogame')" class="edit-btn inner-edit-btn"><Pencil :size="16" /></button>
         </div>
         <div v-else>
-          <input type="text" :value="editableData.videogame" @input="updateData('videogame', $event.target.value)" placeholder="Il tuo gioco preferito">
+          <input type="text" :value="editableData.videogame" @input="updateData('videogame', ($event.target as HTMLInputElement).value)" placeholder="Il tuo gioco preferito">
           <div class="edit-actions">
             <button @click="emit('cancelEdit')" class="action-btn cancel-btn">Annulla</button>
             <button @click="emit('saveChanges')" class="action-btn save-btn">Salva</button>
@@ -133,7 +149,7 @@ const updateGender = (gender: 'male' | 'female' | 'nonbinary') => {
           <button v-if="isOwner" @click="emit('openEditor', 'sport')" class="edit-btn inner-edit-btn"><Pencil :size="16" /></button>
         </div>
         <div v-else>
-          <input type="text" :value="editableData.sport" @input="updateData('sport', $event.target.value)" placeholder="Il tuo sport preferito">
+          <input type="text" :value="editableData.sport" @input="updateData('sport', ($event.target as HTMLInputElement).value)" placeholder="Il tuo sport preferito">
           <div class="edit-actions">
             <button @click="emit('cancelEdit')" class="action-btn cancel-btn">Annulla</button>
             <button @click="emit('saveChanges')" class="action-btn save-btn">Salva</button>
@@ -168,4 +184,18 @@ const updateGender = (gender: 'male' | 'female' | 'nonbinary') => {
 .favorite-item .icon { color: #a0a0a0; flex-shrink: 0; }
 .track-link { color: #fff; background-color: #555; border-radius: 999px; padding: 0.25rem 0.75rem; font-size: 0.8rem; font-weight: bold; text-decoration: none; margin-left: 0.5rem; transition: all 0.2s ease; }
 .track-link:hover { background-color: #777; }
+
+/* Stili per le mention nella Bio */
+.bio-text ::v-deep .mention {
+  color: #818cf8;
+  font-weight: bold;
+  background-color: rgba(79, 70, 229, 0.15);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.bio-text ::v-deep .mention:hover {
+    text-decoration: underline;
+}
 </style>

@@ -1,27 +1,40 @@
 <script setup lang="ts">
-import { defineProps, defineEmits, computed, ref } from 'vue';
+import { defineProps, defineEmits, computed, ref, watch } from 'vue';
 import CommentHeader from './CommentHeader.vue';
 import CommentActions from './CommentActions.vue';
 import CommentReplies from './CommentReplies.vue';
-import { useRouter } from 'vue-router'; // Importa il router
+import { useRouter } from 'vue-router';
+import { parseText, handleMentionClick } from '../utils/textParser'; // Aggiornato
 
-const props = defineProps({
-  comment: { type: Object, required: true },
-  areRepliesVisible: { type: Boolean, default: true },
-  postId: { type: String, required: true },
-  postIsAnonymous: { type: Boolean, required: true },
-  postAuthorId: { type: String, required: true },
-});
+const props = defineProps<{
+  comment: any;
+  areRepliesVisible: boolean;
+  postId: string;
+  postIsAnonymous: boolean;
+  postAuthorId: string;
+}>();
 
 const emit = defineEmits(['vote-comment', 'delete-comment', 'reply-request']);
 
 const areRepliesVisibleInternal = ref(props.areRepliesVisible);
+const parsedCommentText = ref(''); // Nuovo ref per il testo parsato
+const router = useRouter();
+
+// Watch per aggiornare il testo del commento
+watch(() => props.comment.text, async (newText) => {
+    if (newText) {
+        parsedCommentText.value = await parseText(newText);
+    }
+}, { immediate: true });
+
 
 const handleToggleReplies = (isVisible: boolean) => {
   areRepliesVisibleInternal.value = isVisible;
 };
 
-const router = useRouter();
+const onTextClick = (event: MouseEvent) => {
+    handleMentionClick(event, router);
+};
 </script>
 
 <template>
@@ -40,7 +53,7 @@ const router = useRouter();
         @delete-comment="$emit('delete-comment', comment.id)"
         @toggle-replies="handleToggleReplies"
       />
-      <p class="comment-text">{{ comment.text }}</p>
+      <p class="comment-text" @click="onTextClick" v-html="parsedCommentText"></p>
       <CommentActions
         :comment="comment"
         @vote-comment="$emit('vote-comment', $event)"
@@ -77,7 +90,20 @@ const router = useRouter();
   color: #ccc;
   margin: 0.5rem 0;
   line-height: 1.6;
-  padding-left: 44px;
+  padding-left: 52px; /* Aumentato per allineare meglio */
   white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.comment-text ::v-deep .mention {
+  color: #818cf8;
+  font-weight: bold;
+  background-color: rgba(79, 70, 229, 0.15);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.comment-text ::v-deep .mention:hover {
+    text-decoration: underline;
 }
 </style>

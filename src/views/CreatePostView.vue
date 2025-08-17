@@ -2,22 +2,25 @@
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { db, auth, storage } from '../firebase/config';
-import { 
-    collection, 
-    addDoc, 
-    serverTimestamp, 
-    doc, 
-    getDoc, 
-    Timestamp, 
-    updateDoc 
+import {
+    collection,
+    addDoc,
+    serverTimestamp,
+    doc,
+    getDoc,
+    Timestamp,
+    updateDoc,
+    query,
+    where,
+    getDocs
 } from 'firebase/firestore';
-import { 
-    Loader, 
-    ArrowLeft, 
-    Settings, 
-    Image as ImageIcon, 
-    X, 
-    Bold, 
+import {
+    Loader,
+    ArrowLeft,
+    Settings,
+    Image as ImageIcon,
+    X,
+    Bold,
     EyeOff,
     Italic,
     Underline,
@@ -30,6 +33,8 @@ import {
 } from 'lucide-vue-next';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { type Post } from '../types';
+import { createNotification } from '../firebase/notifications';
+// Rimosso l'import di MentionSuggestions
 
 const props = defineProps<{
     postId?: string;
@@ -40,11 +45,11 @@ const postText = ref('');
 const errorMsg = ref('');
 const isLoading = ref(false);
 
-const currentUser = ref<{ 
-    username: string; 
-    avatarUrl: string; 
-    birthdate?: string; 
-    gender?: string; 
+const currentUser = ref<{
+    username: string;
+    avatarUrl: string;
+    birthdate?: string;
+    gender?: string;
 } | null>(null);
 
 const isSettingsOpen = ref(false);
@@ -71,6 +76,7 @@ const selectedMediaFile = ref<File | null>(null);
 const mediaPreviewUrl = ref<string | null>(null);
 const mediaType = ref<'image' | 'video' | null>(null);
 const mediaInputRef = ref<HTMLInputElement | null>(null);
+const textareaRef = ref<HTMLTextAreaElement | null>(null);
 
 const showSnackbar = ref(false);
 const snackbarMessage = ref("");
@@ -123,7 +129,7 @@ const clearMedia = () => {
 };
 
 const applyMarkdown = (syntax: string) => {
-  const textarea = document.querySelector('textarea');
+  const textarea = textareaRef.value;
   if (!textarea) return;
   const start = textarea.selectionStart;
   const end = textarea.selectionEnd;
@@ -136,6 +142,7 @@ const applyMarkdown = (syntax: string) => {
   }
   
   postText.value = newText;
+  nextTick(() => textarea.focus());
 };
 
 const fetchPostToEdit = async (id: string) => {
@@ -146,10 +153,7 @@ const fetchPostToEdit = async (id: string) => {
     if (postSnap.exists()) {
         const postData = postSnap.data() as Post;
         postText.value = postData.text;
-        
         isAnonymous.value = postData.isAnonymous || false;
-        
-        // Disabilitiamo le opzioni di modifica
         isPoll.value = postData.isPoll || false;
         isMediaSpoiler.value = postData.isMediaSpoiler || false;
         
@@ -157,7 +161,6 @@ const fetchPostToEdit = async (id: string) => {
             mediaPreviewUrl.value = postData.mediaUrl;
             mediaType.value = postData.mediaType || 'image';
         }
-
     } else {
         errorMsg.value = "Post non trovato per la modifica.";
         router.push('/');
@@ -236,7 +239,7 @@ const isFormValid = computed(() => {
 
 const addPollOption = () => {
   if (isEditMode.value) {
-    displaySnackbar("Non puoi aggiungere sondaggi o media di un post esistente.");
+    displaySnackbar("Non puoi aggiungere sondaggi o media a un post esistente.");
     return;
   }
   if (pollOptions.value.length < MAX_POLL_OPTIONS) {
@@ -314,17 +317,21 @@ const submitPost = async () => {
   }
 
   try {
+    let postIdForNotification: string;
+    const notificationAuthorName = currentUser.value.username; // Usa sempre il nome utente reale per le notifiche
+
     if (isEditMode.value && props.postId) {
         await updateDoc(doc(db, "posts", props.postId), {
             text: postText.value,
             isEdited: true,
             editedAt: serverTimestamp(),
         });
+        postIdForNotification = props.postId;
     } else {
         const newPostData: any = {
             text: postText.value,
             isAnonymous: isAnonymous.value,
-            author: authorName.value,
+            author: authorName.value, // Nome visualizzato (potrebbe essere anonimo)
             authorId: user.uid,
             score: 0,
             commentsCount: 0,
@@ -351,7 +358,29 @@ const submitPost = async () => {
                 newPostData.pollEndDate = Timestamp.fromDate(new Date(pollEndDate.value));
             }
         }
-        await addDoc(collection(db, "posts"), newPostData);
+        const newPostRef = await addDoc(collection(db, "posts"), newPostData);
+        postIdForNotification = newPostRef.id;
+    }
+
+    const mentionRegex = /@(\w+)/g;
+    const mentionedUsernames = [...new Set(postText.value.match(mentionRegex)?.map(m => m.substring(1)))];
+
+    if (mentionedUsernames.length > 0) {
+        const usersRef = collection(db, "users");
+        const q = query(usersRef, where("username", "in", mentionedUsernames));
+        const usersSnapshot = await getDocs(q);
+
+        usersSnapshot.forEach(userDoc => {
+            const mentionedUserId = userDoc.id;
+            if (mentionedUserId !== user.uid) {
+                createNotification(
+                    mentionedUserId,
+                    'mention',
+                    postIdForNotification,
+                    `${notificationAuthorName} ti ha menzionato in un post.`
+                );
+            }
+        });
     }
 
     router.push('/');
@@ -381,12 +410,18 @@ const submitPost = async () => {
         </div>
         
         <form @submit.prevent="submitPost">
-          <div class="textarea-wrapper">
-            <textarea
-              v-model="postText"
-              :placeholder="isPoll ? 'Qual è la tua domanda?' : 'Scrivi qui...'"
-              :maxlength="MAX_CHARS"
-            ></textarea>
+          <div class="textarea-container">
+            <div class="textarea-wrapper">
+              <textarea
+                ref="textareaRef"
+                v-model="postText"
+                :placeholder="isPoll ? 'Qual è la tua domanda?' : 'Scrivi qui...'"
+                :maxlength="MAX_CHARS"
+              ></textarea>
+              <div class="char-counter" :class="{ 'is-warning': charsRemaining < 20, 'is-error': charsRemaining < 0 }">
+                {{ charsRemaining }}
+              </div>
+            </div>
             <div class="markdown-toolbar">
                 <button type="button" @click="applyMarkdown('**')"><Bold :size="20" /></button>
                 <button type="button" @click="applyMarkdown('*')"><Italic :size="20" /></button>
@@ -397,9 +432,6 @@ const submitPost = async () => {
                     <input type="color" v-model="highlightColor" class="color-picker" />
                     <button type="button" @click="applyMarkdown('highlight')"><Highlighter :size="20" /></button>
                 </div>
-            </div>
-            <div class="char-counter" :class="{ 'is-warning': charsRemaining < 20, 'is-error': charsRemaining < 0 }">
-              {{ charsRemaining }}
             </div>
           </div>
           
@@ -525,7 +557,7 @@ const submitPost = async () => {
 </template>
 
 <style scoped>
-/* Stili Generali (invariati) */
+/* Stili invariati... */
 .page-wrapper { position: relative; width: 100%; overflow-x: hidden; min-height: 100vh; }
 .create-post-container { width: 100%; padding: 1rem; box-sizing: border-box; transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1); }
 .main-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
@@ -538,9 +570,47 @@ const submitPost = async () => {
 .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
 .is-anonymous-avatar-icon { color: #a0a0a0; }
 .username { font-weight: bold; }
-.textarea-wrapper { position: relative; display: flex; flex-direction: column; gap: 1rem; padding-bottom: 3.5rem; }
-textarea { width: 100%; min-height: 120px; background: transparent; color: #e0e0e0; border: none; font-size: 1.5rem; resize: vertical; padding: 0.5rem; box-sizing: border-box; outline: none; }
-.char-counter { position: absolute; bottom: 0.5rem; right: 0.5rem; font-size: 0.8rem; color: #a0a0a0; }
+
+/* Stili layout editor corretti */
+.textarea-container {
+  border: 1px solid #363636;
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: #1f1f1f;
+}
+.textarea-wrapper {
+  position: relative;
+}
+textarea {
+  width: 100%;
+  min-height: 120px;
+  background: transparent;
+  color: #e0e0e0;
+  border: none;
+  font-size: 1.5rem;
+  resize: vertical;
+  padding: 1rem;
+  padding-bottom: 2rem;
+  box-sizing: border-box;
+  outline: none;
+}
+.char-counter {
+  position: absolute;
+  bottom: 0.5rem;
+  right: 1rem;
+  font-size: 0.8rem;
+  color: #a0a0a0;
+}
+.markdown-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background-color: #2a2a2a;
+    border-top: 1px solid #363636;
+}
+/* Fine stili layout */
+
 .char-counter.is-warning { color: #f59e0b; }
 .char-counter.is-error { color: #ef4444; }
 .submit-btn { width: 100%; margin-top: 1.5rem; padding: 0.8rem; border: none; border-radius: 999px; background: linear-gradient(45deg, #4f46e5, #818cf8); color: #fff; font-weight: bold; font-size: 1rem; cursor: pointer; transition: all 0.2s ease; display: flex; justify-content: center; align-items: center; }
@@ -589,7 +659,6 @@ input:checked + .slider:before { transform: translateX(20px); }
 .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(-10px); }
 .list-enter-active, .list-leave-active { transition: all 0.3s ease; }
 .list-enter-from, .list-leave-to { opacity: 0; transform: translateX(30px); }
-
 .media-preview {
   position: relative;
   width: 100%;
@@ -623,19 +692,6 @@ input:checked + .slider:before { transform: translateX(20px); }
 .clear-media-btn:hover {
   background-color: rgba(0, 0, 0, 0.8);
   transform: scale(1.1);
-}
-.markdown-toolbar {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    background-color: #1a1a1a;
-    border-top: 1px solid #363636;
-    z-index: 1;
 }
 .markdown-toolbar button {
     background: #363636;

@@ -6,15 +6,25 @@ import { auth, db } from '../firebase/config';
 import { doc, getDoc, updateDoc, arrayRemove, arrayUnion, increment, Timestamp, onSnapshot } from 'firebase/firestore';
 import PostHeader from './PostHeader.vue';
 import PostMedia from './PostMedia.vue';
-import PostFooter from './PostFooter.vue';
 import { formatTimeAgo } from '../utils/dateUtils';
 import { useRouter } from 'vue-router';
+import { parseText, handleMentionClick } from '../utils/textParser'; // <-- Aggiornato
 
 const props = defineProps<{ post: Post }>();
 const emit = defineEmits(['delete-post']);
 const router = useRouter();
 
 const livePost = ref<Post | null>(null);
+const parsedPostText = ref(''); // <-- Nuovo ref
+
+watch(() => livePost.value?.text, async (newText) => {
+  if (newText) {
+    parsedPostText.value = await parseText(newText);
+  } else if (props.post.text) {
+    parsedPostText.value = await parseText(props.post.text);
+  }
+}, { immediate: true });
+
 const isEditing = ref(false);
 const editedText = ref('');
 const isVotersModalOpen = ref(false);
@@ -63,7 +73,7 @@ const checkPollExpiration = () => {
 onMounted(() => {
     setupPostListener(props.post.id);
     editedText.value = props.post.text;
-    checkPollExpiration(); // Esegui subito il controllo
+    checkPollExpiration();
 });
 
 onUnmounted(() => {
@@ -82,19 +92,6 @@ const postData = computed(() => livePost.value || props.post);
 const isPollExpired = computed(() => isPollExpiredRef.value);
 
 const isOwner = computed(() => auth.currentUser?.uid === postData.value?.authorId);
-
-const parseMarkdown = (text: string) => {
-    // Bold, Italic, Underline, Strikethrough, Spoiler, Highlight
-    text = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>'); // Bold
-    text = text.replace(/\*(.*?)\*/g, '<i>$1</i>');    // Italic
-    text = text.replace(/__(.*?)__/g, '<u>$1</u>');    // Underline
-    text = text.replace(/~~(.*?)~~/g, '<s>$1</s>');    // Strikethrough
-    text = text.replace(/\|\|(.*?)\|\|/g, '<span class="spoiler-text">$1</span>'); // Spoiler
-    text = text.replace(/==#(.*?)==(.*?)==/g, (match, p1, p2) => { // Highlight
-        return `<mark style="background-color: #${p1};">${p2}</mark>`;
-    });
-    return text;
-};
 
 const totalVotes = computed(() => {
   if (!postData.value?.isPoll || !postData.value?.pollOptions) return 0;
@@ -151,18 +148,18 @@ const voteOnPoll = async (selectedIndex: number) => {
   if (voteType === 'multiple') {
     if (hasVotedThisOption) {
       currentOptions[selectedIndex].votes--;
-      currentOptions[selectedIndex].votedBy = currentOptions[selectedIndex].votedBy.filter(id => id !== userId);
+      currentOptions[selectedIndex].votedBy = currentOptions[selectedIndex].votedBy.filter((id: string) => id !== userId);
     } else {
       currentOptions[selectedIndex].votes++;
       if (!currentOptions[selectedIndex].votedBy) currentOptions[selectedIndex].votedBy = [];
       currentOptions[selectedIndex].votedBy.push(userId);
     }
   } else {
-    const previousVoteIndex = currentOptions.findIndex(opt => opt.votedBy?.includes(userId));
+    const previousVoteIndex = currentOptions.findIndex((opt: any) => opt.votedBy?.includes(userId));
     if (previousVoteIndex === selectedIndex) return;
     if (previousVoteIndex !== -1) {
       currentOptions[previousVoteIndex].votes--;
-      currentOptions[previousVoteIndex].votedBy = currentOptions[previousVoteIndex].votedBy.filter(id => id !== userId);
+      currentOptions[previousVoteIndex].votedBy = currentOptions[previousVoteIndex].votedBy.filter((id: string) => id !== userId);
     }
     currentOptions[selectedIndex].votes++;
     if (!currentOptions[selectedIndex].votedBy) currentOptions[selectedIndex].votedBy = [];
@@ -266,7 +263,7 @@ const handleVote = async (voteType: 'up' | 'down') => {
     />
     
     <div v-if="!isEditing">
-      <p class="card-text" v-html="parseMarkdown(postData.text)"></p>
+      <p class="card-text" @click="handleMentionClick($event, router)" v-html="parsedPostText"></p>
     </div>
     <div v-else>
       <textarea v-model="editedText" class="edit-textarea"></textarea>
@@ -323,14 +320,14 @@ const handleVote = async (voteType: 'up' | 'down') => {
         <ArrowUp 
           :size="22" 
           class="icon vote-icon" 
-          :class="{ 'upvoted': postData.upvotedBy?.includes(auth.currentUser?.uid) }"
+          :class="{ 'upvoted': postData.upvotedBy?.includes(auth.currentUser?.uid!) }"
           @click="handleVote('up')" 
         />
         <span class="score">{{ postData.score }} punti</span>
         <ArrowDown 
           :size="22" 
           class="icon vote-icon" 
-          :class="{ 'downvoted': postData.downvotedBy?.includes(auth.currentUser?.uid) }"
+          :class="{ 'downvoted': postData.downvotedBy?.includes(auth.currentUser?.uid!) }"
           @click="handleVote('down')" 
         />
       </div>
@@ -376,9 +373,21 @@ const handleVote = async (voteType: 'up' | 'down') => {
   color: #e0e0e0; line-height: 1.6; font-size: 1rem; 
   white-space: pre-wrap; margin-top: 1rem; word-wrap: break-word; 
 }
-.card-text ::v-deep b, .card-text ::v_deep .spoiler-text {
+.card-text ::v-deep b, .card-text ::v_deep .spoiler-text, .card-text ::v-deep .mention {
   word-break: break-word;
   overflow-wrap: break-word;
+}
+.card-text ::v-deep .mention {
+  color: #818cf8;
+  font-weight: bold;
+  background-color: rgba(79, 70, 229, 0.15);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.card-text ::v-deep .mention:hover {
+    text-decoration: underline;
 }
 .voting, .comments-count { display: flex; align-items: center; gap: 0.75rem; }
 .score { font-weight: bold; font-size: 1rem; min-width: 60px; text-align: center; }
@@ -543,5 +552,39 @@ const handleVote = async (voteType: 'up' | 'down') => {
 
 .edited-label {
   margin-left: 0.5rem;
+}
+.edit-textarea {
+  width: 100%;
+  min-height: 120px;
+  background-color: #1a1a1a;
+  border: 1px solid #4f46e5;
+  color: #fff;
+  padding: 0.75rem;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 1rem;
+  resize: vertical;
+}
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.cancel-btn, .save-btn {
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 999px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.cancel-btn {
+  background-color: #363636;
+  color: #fff;
+}
+.save-btn {
+  background-color: #4f46e5;
+  color: #fff;
 }
 </style>

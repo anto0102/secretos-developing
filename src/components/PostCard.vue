@@ -3,16 +3,31 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { db, auth } from '../firebase/config';
 import { doc, deleteDoc, updateDoc, arrayRemove, arrayUnion, increment, onSnapshot, getDoc } from 'firebase/firestore';
 import { useRouter } from 'vue-router';
-import { X, CheckCircle, Eye, EyeOff } from 'lucide-vue-next';
+import { X, CheckCircle, Eye } from 'lucide-vue-next';
 import { type Post } from '../types';
 import PostHeader from './PostHeader.vue';
 import PostMedia from './PostMedia.vue';
 import PostFooter from './PostFooter.vue';
 import { formatTimeAgo } from '../utils/dateUtils';
+import { parseText, handleMentionClick } from '../utils/textParser'; // Corretto l'import
 
 const props = defineProps<{ post: Post }>();
 const router = useRouter();
+
 const livePost = ref<Post | null>(null);
+const parsedPostText = ref(''); // Ref per contenere l'HTML generato
+
+// Watch per aggiornare il testo parsato quando il post cambia
+watch(() => livePost.value?.text, async (newText) => {
+  const textToParse = newText || props.post.text;
+  if (textToParse) {
+    parsedPostText.value = await parseText(textToParse);
+  } else {
+    parsedPostText.value = '';
+  }
+}, { immediate: true });
+
+
 let unsubscribe: (() => void) | null = null;
 let timeoutId: number | null = null;
 
@@ -72,19 +87,6 @@ watch(livePost, () => {
 const postData = computed(() => livePost.value || props.post);
 const isPollExpired = computed(() => isPollExpiredRef.value);
 
-const parseMarkdown = (text: string) => {
-    // Bold, Italic, Underline, Strikethrough, Spoiler, Highlight
-    text = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>'); // Bold
-    text = text.replace(/\*(.*?)\*/g, '<i>$1</i>');    // Italic
-    text = text.replace(/__(.*?)__/g, '<u>$1</u>');    // Underline
-    text = text.replace(/~~(.*?)~~/g, '<s>$1</s>');    // Strikethrough
-    text = text.replace(/\|\|(.*?)\|\|/g, '<span class="spoiler-text">$1</span>'); // Spoiler
-    text = text.replace(/==#(.*?)==(.*?)==/g, (match, p1, p2) => { // Highlight
-        return `<mark style="background-color: #${p1};">${p2}</mark>`;
-    });
-    return text;
-};
-
 const totalVotes = computed(() => {
   if (!postData.value.isPoll || !postData.value.pollOptions) return 0;
   return postData.value.pollOptions.reduce((sum, option) => sum + option.votes, 0);
@@ -92,7 +94,7 @@ const totalVotes = computed(() => {
 
 const userHasVoted = computed(() => {
     if (!postData.value.isPoll || !postData.value.pollOptions || !auth.currentUser) return false;
-    return postData.value.pollOptions.some(option => option.votedBy?.includes(auth.currentUser.uid));
+    return postData.value.pollOptions.some(option => option.votedBy?.includes(auth.currentUser!.uid));
 });
 
 const userVotesIndices = computed(() => {
@@ -100,7 +102,7 @@ const userVotesIndices = computed(() => {
     const indices: number[] = [];
     if (postData.value.pollOptions) {
         postData.value.pollOptions.forEach((option, index) => {
-            if (option.votedBy?.includes(auth.currentUser.uid)) {
+            if (option.votedBy?.includes(auth.currentUser!.uid)) {
                 indices.push(index);
             }
         });
@@ -140,18 +142,18 @@ const voteOnPoll = async (selectedIndex: number) => {
   if (voteType === 'multiple') {
     if (hasVotedThisOption) {
       currentOptions[selectedIndex].votes--;
-      currentOptions[selectedIndex].votedBy = currentOptions[selectedIndex].votedBy.filter(id => id !== userId);
+      currentOptions[selectedIndex].votedBy = currentOptions[selectedIndex].votedBy.filter((id: string) => id !== userId);
     } else {
       currentOptions[selectedIndex].votes++;
       if (!currentOptions[selectedIndex].votedBy) currentOptions[selectedIndex].votedBy = [];
       currentOptions[selectedIndex].votedBy.push(userId);
     }
   } else {
-    const previousVoteIndex = currentOptions.findIndex(opt => opt.votedBy?.includes(userId));
+    const previousVoteIndex = currentOptions.findIndex((opt: any) => opt.votedBy?.includes(userId));
     if (previousVoteIndex === selectedIndex) return;
     if (previousVoteIndex !== -1) {
       currentOptions[previousVoteIndex].votes--;
-      currentOptions[previousVoteIndex].votedBy = currentOptions[previousVoteIndex].votedBy.filter(id => id !== userId);
+      currentOptions[previousVoteIndex].votedBy = currentOptions[previousVoteIndex].votedBy.filter((id: string) => id !== userId);
     }
     currentOptions[selectedIndex].votes++;
     if (!currentOptions[selectedIndex].votedBy) currentOptions[selectedIndex].votedBy = [];
@@ -224,6 +226,13 @@ const showVoters = async () => {
 const handleEditPost = (postId: string) => {
     router.push({ name: 'CreatePost', params: { postId } });
 };
+
+const onTextClick = (event: MouseEvent) => {
+    handleMentionClick(event, router);
+    if (!(event.target as HTMLElement).closest('a[data-mention="true"]')) {
+        router.push({ name: 'PostView', params: { postId: postData.value.id } });
+    }
+};
 </script>
 
 <template>
@@ -238,7 +247,7 @@ const handleEditPost = (postId: string) => {
       @edit-post="handleEditPost"
     />
 
-    <p class="card-text" @click="router.push({ name: 'PostView', params: { postId: postData.id } })" v-html="parseMarkdown(postData.text)"></p>
+    <p class="card-text" @click="onTextClick" v-html="parsedPostText"></p>
 
     <PostMedia
       :media-url="postData.mediaUrl"
@@ -336,7 +345,7 @@ const handleEditPost = (postId: string) => {
   cursor: pointer;
   word-wrap: break-word;
 }
-.card-text ::v-deep b, .card-text ::v-deep .spoiler-text {
+.card-text ::v-deep b, .card-text ::v-deep .spoiler-text, .card-text ::v-deep .mention {
   word-break: break-word;
   overflow-wrap: break-word;
 }
@@ -356,20 +365,31 @@ const handleEditPost = (postId: string) => {
   color: #fff;
   background-color: transparent;
 }
-.card-text ::v_deep i {
+.card-text ::v-deep i {
   font-style: italic;
 }
-.card-text ::v_deep u {
+.card-text ::v-deep u {
   text-decoration: underline;
 }
-.card-text ::v_deep s {
+.card-text ::v-deep s {
   text-decoration: line-through;
 }
-.card-text ::v_deep mark {
-  background-color: yellow;
+.card-text ::v-deep mark {
   color: #000;
   padding: 0.1rem 0.2rem;
   border-radius: 3px;
+}
+.card-text ::v-deep .mention {
+  color: #818cf8;
+  font-weight: bold;
+  background-color: rgba(79, 70, 229, 0.15);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.card-text ::v-deep .mention:hover {
+    text-decoration: underline;
 }
 .poll-container {
   margin-top: 1.5rem;
