@@ -4,7 +4,10 @@ import CommentItem from './CommentItem.vue';
 
 const props = defineProps<{ 
   replies?: any[],
-  areVisible: boolean
+  areVisible: boolean,
+  postId: string,
+  postIsAnonymous: boolean,
+  postAuthorId: string,
 }>();
 
 defineEmits(['vote-comment', 'delete-comment', 'submit-reply']);
@@ -17,6 +20,9 @@ defineEmits(['vote-comment', 'delete-comment', 'submit-reply']);
         v-for="reply in replies"
         :key="reply.id"
         :comment="reply"
+        :post-id="postId"
+        :post-is-anonymous="postIsAnonymous"
+        :post-author-id="postAuthorId"
         @vote-comment="(payload) => $emit('vote-comment', payload)"
         @delete-comment="(commentId) => $emit('delete-comment', commentId)"
         @reply-request="(payload) => $emit('reply-request', payload)"

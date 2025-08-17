@@ -22,7 +22,11 @@ import {
     Italic,
     Underline,
     Strikethrough,
-    Highlighter
+    Highlighter,
+    Lock,
+    UserCircle,
+    Venus,
+    Mars
 } from 'lucide-vue-next';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { type Post } from '../types';
@@ -126,7 +130,7 @@ const applyMarkdown = (syntax: string) => {
   const selectedText = postText.value.substring(start, end);
   let newText = "";
   if (syntax === "highlight") {
-    newText = postText.value.substring(0, start) + `==${highlightColor.value}==` + selectedText + `==` + postText.value.substring(end);
+    newText = postText.value.substring(0, start) + `==${highlightColor.value.replace('#','')}==` + selectedText + `==` + postText.value.substring(end);
   } else {
     newText = postText.value.substring(0, start) + syntax + selectedText + syntax + postText.value.substring(end);
   }
@@ -204,6 +208,18 @@ const authorName = computed(() => {
   return currentUser.value?.username || 'Utente';
 });
 
+const currentAvatarUrl = computed(() => {
+  return isAnonymous.value ? null : currentUser.value?.avatarUrl;
+});
+const currentAnonymousIcon = computed(() => {
+    if (isAnonymous.value && currentUser.value) {
+        if (currentUser.value.gender === 'male') return Mars;
+        if (currentUser.value.gender === 'female') return Venus;
+    }
+    return UserCircle;
+});
+
+
 const charsRemaining = computed(() => MAX_CHARS - postText.value.length);
 
 const isFormValid = computed(() => {
@@ -219,11 +235,19 @@ const isFormValid = computed(() => {
 });
 
 const addPollOption = () => {
+  if (isEditMode.value) {
+    displaySnackbar("Non puoi aggiungere sondaggi o media di un post esistente.");
+    return;
+  }
   if (pollOptions.value.length < MAX_POLL_OPTIONS) {
     pollOptions.value.push({ text: '' });
   }
 };
 const removePollOption = (index: number) => {
+  if (isEditMode.value) {
+    displaySnackbar("Non puoi modificare sondaggi o media di un post esistente.");
+    return;
+  }
   if (pollOptions.value.length > 2) {
     pollOptions.value.splice(index, 1);
   }
@@ -312,6 +336,11 @@ const submitPost = async () => {
             isMediaSpoiler: isMediaSpoiler.value
         };
 
+        if (isAnonymous.value && currentUser.value) {
+          newPostData.anonymousAuthorGender = currentUser.value.gender;
+          newPostData.anonymousAuthorBirthdate = currentUser.value.birthdate;
+        }
+
         if (isPoll.value) {
             newPostData.isPoll = true;
             newPostData.pollOptions = pollOptions.value
@@ -346,7 +375,8 @@ const submitPost = async () => {
       
       <div class="content-body">
         <div v-if="currentUser" class="user-header">
-          <img :src="currentUser.avatarUrl" class="avatar" alt="User avatar">
+          <img v-if="!isAnonymous && currentAvatarUrl" :src="currentAvatarUrl" class="avatar" alt="User avatar">
+          <component v-else :is="currentAnonymousIcon" :size="32" class="avatar is-anonymous-avatar-icon" />
           <span class="username">{{ authorName }}</span>
         </div>
         
@@ -429,8 +459,8 @@ const submitPost = async () => {
       <div class="setting-item">
         <div class="setting-label"><strong>Post Anonimo</strong><p>Nascondi il tuo username.</p></div>
         <label class="switch">
-          <input type="checkbox" v-model="isAnonymous" :disabled="isEditMode" @click.stop="isEditMode && displaySnackbar('Non puoi modificare le impostazioni di anonimato di un post esistente.')">
-          <span class="slider" :class="{'disabled-slider': isEditMode}"></span>
+          <input type="checkbox" v-model="isAnonymous" :disabled="isEditMode && isAnonymous" @click.stop="isEditMode && isAnonymous && displaySnackbar('Non puoi modificare le impostazioni di anonimato di un post esistente.')">
+          <span class="slider" :class="{'disabled-slider': isEditMode && isAnonymous}"></span>
         </label>
       </div>
       <div class="divider"></div>
@@ -506,6 +536,7 @@ const submitPost = async () => {
 .content-body { max-width: 700px; margin: 0 auto; }
 .user-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
 .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.is-anonymous-avatar-icon { color: #a0a0a0; }
 .username { font-weight: bold; }
 .textarea-wrapper { position: relative; display: flex; flex-direction: column; gap: 1rem; padding-bottom: 3.5rem; }
 textarea { width: 100%; min-height: 120px; background: transparent; color: #e0e0e0; border: none; font-size: 1.5rem; resize: vertical; padding: 0.5rem; box-sizing: border-box; outline: none; }
@@ -526,10 +557,10 @@ textarea { width: 100%; min-height: 120px; background: transparent; color: #e0e0
 .panel-button { width: 100%; display: flex; align-items: center; gap: 0.75rem; background-color: #363636; border: none; color: #fff; padding: 0.75rem; border-radius: 8px; margin-bottom: 0.5rem; cursor: pointer; transition: background-color 0.2s; position: relative; }
 .panel-button:hover { background-color: #444; }
 .panel-button:disabled { cursor: not-allowed; opacity: 0.5; }
-.switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+.switch { position: relative; display: inline-block; width: 40px; height: 20px; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #363636; transition: .4s; border-radius: 34px; }
-.slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+.slider:before { position: absolute; content: ""; height: 12px; width: 12px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
 input:checked + .slider { background-color: #4f46e5; }
 input:checked + .slider:before { transform: translateX(20px); }
 .slider.disabled-slider { background-color: #444; cursor: not-allowed; }

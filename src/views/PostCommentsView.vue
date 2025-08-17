@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick, onUnmounted } from 'vue';
+import { ref, onMounted, watch, nextTick } from 'vue';
 import { db, auth } from '../firebase/config';
-import { collection, query, where, orderBy, getDocs, addDoc, doc, updateDoc, increment, deleteDoc, getDoc as getFirestoreDoc, arrayUnion, arrayRemove, onSnapshot, DocumentSnapshot } from 'firebase/firestore';
+import { collection, query, where, orderBy, getDocs, addDoc, doc, updateDoc, increment, deleteDoc, getDoc as getFirestoreDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { type Comment } from '../types';
 import { Loader, Sparkles, Flame } from 'lucide-vue-next';
 import CommentItem from '../components/CommentItem.vue';
@@ -14,10 +14,10 @@ const comments = ref<Comment[]>([]);
 const isLoading = ref(true);
 const errorMsg = ref('');
 const currentUser = ref<{ username: string, avatarUrl: string } | null>(null);
+const postAuthorDetails = ref<{ id: string, isAnonymous: boolean, gender?: string, birthdate?: string } | null>(null);
 const replyingTo = ref<Comment | null>(null);
 const activeFilter = ref<'new' | 'viral'>('new');
 const highlightedCommentId = ref<string | null>(null);
-let unsubscribe: (() => void) | null = null;
 
 const fetchCurrentUser = async () => {
   const user = auth.currentUser;
@@ -31,66 +31,101 @@ const fetchCurrentUser = async () => {
   }
 };
 
-const setupCommentsListener = (id: string, filter: 'new' | 'viral' = 'new') => {
+const calculateAge = (birthdate: string): number | null => {
+  if (!birthdate) return null;
+  const birthDate = new Date(birthdate);
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const m = today.getMonth() - birthDate.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+  return age;
+};
+
+const fetchComments = async (id: string, filter: 'new' | 'viral' = 'new') => {
     isLoading.value = true;
     errorMsg.value = '';
+    comments.value = [];
+    try {
+        const postDocRef = doc(db, "posts", id);
+        const postDocSnap = await getFirestoreDoc(postDocRef);
+        if (postDocSnap.exists()) {
+            const postData = postDocSnap.data();
+            postAuthorDetails.value = {
+                id: postData.authorId,
+                isAnonymous: postData.isAnonymous,
+                gender: postData.anonymousAuthorGender,
+                birthdate: postData.anonymousAuthorBirthdate
+            };
+        } else {
+            errorMsg.value = "Post non trovato.";
+            return;
+        }
 
-    const commentsRef = collection(db, "comments");
-    const orderByField = filter === 'viral' ? 'score' : 'createdAt';
-    const q = query(commentsRef, where("postId", "==", id), orderBy(orderByField, "desc"));
+        const commentsRef = collection(db, "comments");
+        const orderByField = filter === 'viral' ? 'score' : 'createdAt';
+        const q = query(commentsRef, where("postId", "==", id), orderBy(orderByField, "desc"));
+        const querySnapshot = await getDocs(q);
 
-    if (unsubscribe) unsubscribe();
+        const fetchedComments: Comment[] = [];
+        const commentMap = new Map<string, Comment>();
 
-    unsubscribe = onSnapshot(q, async (querySnapshot) => {
-      const fetchedComments: Comment[] = [];
-      const commentMap = new Map<string, Comment>();
+        const authorIds = new Set(querySnapshot.docs.map(doc => doc.data().authorId));
+        const userDocs = await Promise.all([...authorIds].map(uid => getFirestoreDoc(doc(db, "users", uid))));
+        const userMap = new Map<string, any>();
+        userDocs.forEach(userDoc => {
+            if (userDoc.exists()) userMap.set(userDoc.id, userDoc.data());
+        });
 
-      const authorIds = new Set(querySnapshot.docs.map(doc => doc.data().authorId));
-      const userDocs = await Promise.all([...authorIds].map(uid => getFirestoreDoc(doc(db, "users", uid))));
-      const userMap = new Map<string, any>();
-      userDocs.forEach(userDoc => {
-          if (userDoc.exists()) userMap.set(userDoc.id, userDoc.data());
-      });
+        querySnapshot.docs.forEach(d => {
+            const commentData = { ...d.data(), id: d.id, replies: [] } as Comment;
+            const userData = userMap.get(commentData.authorId);
+            commentData.authorUsername = userData?.username || 'Utente Sconosciuto';
+            commentData.authorAvatarUrl = userData?.avatarUrl || '';
 
-      querySnapshot.docs.forEach(d => {
-          const commentData = { ...d.data(), id: d.id, replies: [] } as Comment;
-          const userData = userMap.get(commentData.authorId);
-          commentData.authorUsername = userData?.username || 'Utente Sconosciuto';
-          commentData.authorAvatarUrl = userData?.avatarUrl || '';
-          commentMap.set(commentData.id, commentData);
-      });
+            if (postAuthorDetails.value?.isAnonymous && postAuthorDetails.value?.id === commentData.authorId) {
+                const age = postAuthorDetails.value.birthdate ? `di ${calculateAge(postAuthorDetails.value.birthdate)} anni` : '';
+                let gender = '';
+                if (postAuthorDetails.value.gender === 'male') gender = 'Uomo';
+                else if (postAuthorDetails.value.gender === 'female') gender = 'Donna';
+                else gender = 'Persona';
+                commentData.authorUsername = `${gender} ${age}`.trim();
+            }
 
-      commentMap.forEach(commentData => {
-          if (commentData.parentId) {
-              const parentComment = commentMap.get(commentData.parentId);
-              if (parentComment) {
-                  parentComment.replies.push(commentData);
-              }
-          } else {
-              fetchedComments.push(commentData);
-          }
-      });
-      
-      comments.value = fetchedComments;
-      isLoading.value = false;
+            commentMap.set(commentData.id, commentData);
+        });
 
-      if (props.commentId) {
-          highlightedCommentId.value = props.commentId;
-          await nextTick();
-          const el = document.getElementById(`comment-${props.commentId}`);
-          if (el) {
-              el.scrollIntoView({ behavior: 'smooth' });
-              el.classList.add('highlighted');
-              setTimeout(() => {
-                el.classList.remove('highlighted');
-              }, 3000);
-          }
-      }
-    }, (e) => {
+        commentMap.forEach(commentData => {
+            if (commentData.parentId) {
+                const parentComment = commentMap.get(commentData.parentId);
+                if (parentComment) {
+                    parentComment.replies.push(commentData);
+                }
+            } else {
+                fetchedComments.push(commentData);
+            }
+        });
+
+        comments.value = fetchedComments;
+        
+        if (props.commentId) {
+            highlightedCommentId.value = props.commentId;
+            await nextTick();
+            const el = document.getElementById(`comment-${props.commentId}`);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth' });
+                el.classList.add('highlighted');
+                setTimeout(() => {
+                  el.classList.remove('highlighted');
+                }, 3000);
+            }
+        }
+
+    } catch (e) {
         errorMsg.value = "Errore nel caricamento dei commenti.";
         console.error(e);
+    } finally {
         isLoading.value = false;
-    });
+    }
 };
 
 const submitComment = async (text: string) => {
@@ -116,25 +151,54 @@ const submitComment = async (text: string) => {
         const postRef = doc(db, "posts", props.postId);
         const postSnap = await getFirestoreDoc(postRef);
         if(postSnap.exists()){
-            const postAuthorId = postSnap.data().authorId;
-
-            // Inviamo la notifica all'autore del post
-            if (postAuthorId !== user.uid) {
-                await createNotification(postAuthorId, 'comment', props.postId, `${currentUser.value.username} ha commentato il tuo post.`, newCommentRef.id);
+            const postData = postSnap.data();
+            const postAuthorId = postData.authorId;
+            
+            let notificationAuthorName = currentUser.value.username;
+            if (postAuthorDetails.value?.isAnonymous && postAuthorDetails.value?.id === user.uid) {
+                const age = postAuthorDetails.value.birthdate ? `di ${calculateAge(postAuthorDetails.value.birthdate)} anni` : '';
+                let gender = '';
+                if (postAuthorDetails.value.gender === 'male') gender = 'Uomo';
+                else if (postAuthorDetails.value.gender === 'female') gender = 'Donna';
+                else gender = 'Persona';
+                notificationAuthorName = `${gender} ${age}`.trim();
+            }
+            
+            let notificationText = `${notificationAuthorName} ha commentato il tuo post.`;
+            if (replyingTo.value) {
+                notificationText = `${notificationAuthorName} ha risposto al tuo commento.`;
             }
 
-            // Se è una risposta, invia una notifica all'autore del commento padre
+            if (postAuthorId !== user.uid) {
+                await createNotification(postAuthorId, 'comment', props.postId, notificationText, newCommentRef.id);
+            }
+
             if (replyingTo.value && replyingTo.value.authorId !== user.uid) {
-                await createNotification(replyingTo.value.authorId, 'reply', props.postId, `${currentUser.value.username} ha risposto al tuo commento.`, newCommentRef.id);
+                await createNotification(replyingTo.value.authorId, 'reply', props.postId, notificationText, newCommentRef.id);
             }
         }
 
         await updateDoc(postRef, { commentsCount: increment(1) });
+        await fetchComments(props.postId, activeFilter.value);
         replyingTo.value = null;
     } catch (e) {
         errorMsg.value = "Errore nell'invio del commento.";
         console.error(e);
     }
+};
+
+const findAndUpdateComment = (commentsArray: Comment[], commentId: string, newScore: number, upvotedBy: string[], downvotedBy: string[]) => {
+  for (const comment of commentsArray) {
+    if (comment.id === commentId) {
+      comment.score = newScore;
+      comment.upvotedBy = upvotedBy;
+      comment.downvotedBy = downvotedBy;
+      return;
+    }
+    if (comment.replies) {
+      findAndUpdateComment(comment.replies, commentId, newScore, upvotedBy, downvotedBy);
+    }
+  }
 };
 
 const voteComment = async (payload: { commentId: string, voteType: 'up' | 'down' }) => {
@@ -182,6 +246,8 @@ const voteComment = async (payload: { commentId: string, voteType: 'up' | 'down'
     }
     
     await updateDoc(commentRef, { upvotedBy: newUpvotedBy, downvotedBy: newDownvotedBy, score: newScore });
+    
+    findAndUpdateComment(comments.value, payload.commentId, newScore, newUpvotedBy, newDownvotedBy);
 };
 
 const deleteComment = async (commentId: string) => {
@@ -191,6 +257,8 @@ const deleteComment = async (commentId: string) => {
     await deleteDoc(commentRef);
     const postRef = doc(db, "posts", props.postId);
     await updateDoc(postRef, { commentsCount: increment(-1) });
+
+    await fetchComments(props.postId, activeFilter.value);
   } catch (error) {
     console.error("Errore durante l'eliminazione del commento:", error);
   }
@@ -206,19 +274,15 @@ const cancelReply = () => {
 
 onMounted(() => {
     fetchCurrentUser();
-    setupCommentsListener(props.postId);
-});
-
-onUnmounted(() => {
-    if (unsubscribe) unsubscribe();
+    fetchComments(props.postId);
 });
 
 watch(activeFilter, (newFilter) => {
-  setupCommentsListener(props.postId, newFilter);
+  fetchComments(props.postId, newFilter);
 });
 
 watch(() => props.postId, (newId) => {
-    setupCommentsListener(newId, activeFilter.value);
+    fetchComments(newId, activeFilter.value);
 });
 </script>
 
@@ -247,6 +311,9 @@ watch(() => props.postId, (newId) => {
           :key="comment.id"
           :comment="comment"
           :id="`comment-${comment.id}`"
+          :post-id="props.postId"
+          :post-is-anonymous="postAuthorDetails?.isAnonymous || false"
+          :post-author-id="postAuthorDetails?.id || ''"
           @vote-comment="voteComment"
           @delete-comment="deleteComment"
           @reply-request="handleReplyRequest"

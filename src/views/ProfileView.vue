@@ -137,6 +137,11 @@ const fetchInitialTabData = async (tab: 'posts' | 'comments') => {
     orderBy("createdAt", "desc"),
     limit(10)
   );
+
+  // Aggiungi la condizione per i post anonimi se l'utente non è il proprietario del profilo
+  if (tab === 'posts' && !isOwner.value) {
+    q = query(collection(db, collectionName), where("authorId", "==", props.userId), where("isAnonymous", "==", false), orderBy("createdAt", "desc"), limit(10));
+  }
   
   const querySnapshot = await getDocs(q);
   lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
@@ -170,6 +175,10 @@ const loadMore = async () => {
     startAfter(lastVisibleDoc.value),
     limit(10)
   );
+
+  if (collectionName === 'posts' && !isOwner.value) {
+    q = query(collection(db, collectionName), where("authorId", "==", props.userId), where("isAnonymous", "==", false), orderBy("createdAt", "desc"), startAfter(lastVisibleDoc.value), limit(10));
+  }
 
   const querySnapshot = await getDocs(q);
   if (!querySnapshot.empty) {

@@ -7,7 +7,10 @@ import { useRouter } from 'vue-router'; // Importa il router
 
 const props = defineProps({
   comment: { type: Object, required: true },
-  areRepliesVisible: { type: Boolean, default: true }
+  areRepliesVisible: { type: Boolean, default: true },
+  postId: { type: String, required: true },
+  postIsAnonymous: { type: Boolean, required: true },
+  postAuthorId: { type: String, required: true },
 });
 
 const emit = defineEmits(['vote-comment', 'delete-comment', 'reply-request']);
@@ -31,6 +34,9 @@ const router = useRouter();
         :reply-count="comment.replies?.length"
         :created-at="comment.createdAt"
         :are-replies-visible="areRepliesVisibleInternal"
+        :post-id="postId"
+        :post-is-anonymous="postIsAnonymous"
+        :post-author-id="postAuthorId"
         @delete-comment="$emit('delete-comment', comment.id)"
         @toggle-replies="handleToggleReplies"
       />
@@ -45,6 +51,9 @@ const router = useRouter();
     <CommentReplies
       :replies="comment.replies"
       :are-visible="areRepliesVisibleInternal"
+      :post-is-anonymous="postIsAnonymous"
+      :post-author-id="postAuthorId"
+      :post-id="postId"
       @vote-comment="(payload) => $emit('vote-comment', payload)"
       @delete-comment="(commentId) => $emit('delete-comment', commentId)"
       @reply-request="(payload) => $emit('reply-request', payload)"

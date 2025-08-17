@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { defineProps, defineEmits, computed, ref } from 'vue';
-import { MoreHorizontal, Trash2, ChevronDown } from 'lucide-vue-next';
-import { auth } from '../firebase/config';
+import { defineProps, defineEmits, computed, ref, watch } from 'vue';
+import { MoreHorizontal, Trash2, ChevronDown, UserCircle, Venus, Mars } from 'lucide-vue-next';
+import { auth, db } from '../firebase/config';
 import { useRouter } from 'vue-router';
 import { formatTimeAgo } from '../utils/dateUtils';
+import { doc, getDoc } from 'firebase/firestore';
+import { type Post } from '../types';
 
 const props = defineProps<{
   authorAvatarUrl?: string;
@@ -12,6 +14,9 @@ const props = defineProps<{
   replyCount?: number;
   areRepliesVisible: boolean;
   createdAt: any;
+  postId: string;
+  postIsAnonymous: boolean;
+  postAuthorId: string;
 }>();
 
 const emit = defineEmits(['delete-comment', 'toggle-replies']);
@@ -19,15 +24,54 @@ const router = useRouter();
 
 const isMenuOpen = ref(false);
 const isOwner = computed(() => auth.currentUser?.uid === props.authorId);
+const isOP = computed(() => props.authorId === props.postAuthorId);
+const anonymousGender = ref('nonbinary');
 
+const showAnonymousAuthor = computed(() => props.postIsAnonymous && isOP.value);
+
+const fetchAnonymousGender = async () => {
+    if (showAnonymousAuthor.value) {
+        const postDocRef = doc(db, 'posts', props.postId);
+        const postDocSnap = await getDoc(postDocRef);
+        if (postDocSnap.exists()) {
+            const postData = postDocSnap.data() as Post;
+            if (postData.anonymousAuthorGender) {
+                anonymousGender.value = postData.anonymousAuthorGender;
+            }
+        }
+    }
+};
+
+watch(() => props.postId, fetchAnonymousGender, { immediate: true });
+
+const anonymousIcon = computed(() => {
+    if (anonymousGender.value === 'male') return Mars;
+    if (anonymousGender.value === 'female') return Venus;
+    return UserCircle;
+});
+
+const goToProfile = () => {
+    if (!showAnonymousAuthor.value) {
+        router.push({ name: 'Profile', params: { userId: props.authorId } });
+    }
+};
+
+const toggleMenu = () => {
+  isMenuOpen.value = !isMenuOpen.value;
+};
 </script>
 
 <template>
   <div class="comment-header-row">
     <div class="author-info">
-      <img v-if="authorAvatarUrl" :src="authorAvatarUrl" class="comment-avatar" alt="Avatar">
-      <div v-else class="comment-avatar-placeholder"></div>
-      <router-link :to="{ name: 'Profile', params: { userId: authorId } }" class="author-link">
+      <div v-if="showAnonymousAuthor" class="author-link is-anonymous-link" @click="goToProfile">
+        <component :is="anonymousIcon" :size="24" class="comment-avatar is-anonymous-avatar-icon" />
+        <span class="comment-author">{{ authorUsername }}</span>
+        <span class="op-badge">OP</span>
+      </div>
+      <router-link v-else :to="{ name: 'Profile', params: { userId: authorId } }" class="author-link">
+        <img v-if="authorAvatarUrl" :src="authorAvatarUrl" class="comment-avatar" alt="Avatar">
+        <div v-else class="comment-avatar-placeholder"></div>
         <span class="comment-author">{{ authorUsername }}</span>
       </router-link>
       <span class="comment-timestamp">{{ formatTimeAgo(createdAt) }}</span>
@@ -60,9 +104,14 @@ const isOwner = computed(() => auth.currentUser?.uid === props.authorId);
 <style scoped>
 .comment-header-row { display: flex; align-items: center; justify-content: space-between; }
 .author-info { display: flex; align-items: center; gap: 0.75rem; }
-.comment-avatar, .comment-avatar-placeholder { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; background-color: #444; }
-.author-link { text-decoration: none; }
+.comment-avatar, .comment-avatar-placeholder { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background-color: #444; }
+.comment-avatar.is-anonymous-avatar-icon { color: #a0a0a0; }
+.author-link { text-decoration: none; display: flex; align-items: center; gap: 0.5rem; }
+.author-link.is-anonymous-link {
+  cursor: default;
+}
 .comment-author { font-weight: bold; color: #fff; }
+.op-badge { background-color: #4f46e5; color: #fff; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: bold; }
 .comment-timestamp { font-size: 0.8rem; color: #a0a0a0; }
 .controls { display: flex; align-items: center; gap: 0.5rem; }
 .icon { cursor: pointer; color: #a0a0a0; }

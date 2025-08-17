@@ -12,12 +12,17 @@ export interface Post {
   mediaUrl?: string; // <-- MODIFICATO: ora è l'URL di media generico
   mediaType?: 'image' | 'video'; // <-- NUOVO: per distinguere tra immagine e video
   isMediaSpoiler?: boolean; // <-- NUOVO: indica se il media è oscurato
+  isEdited?: boolean;
+  editedAt?: Timestamp;
+  pollEndDate?: Timestamp; // <-- AGGIUNTO: Data di fine del sondaggio
   commentsCount: number;
   createdAt?: Timestamp;
   upvotedBy: string[];
   downvotedBy: string[];
   authorAvatarUrl?: string;
   isAnonymous?: boolean;
+  anonymousAuthorGender?: 'male' | 'female' | 'nonbinary';
+  anonymousAuthorBirthdate?: string;
   isPoll?: boolean;
   pollOptions?: {
     text: string;

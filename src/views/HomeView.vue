@@ -144,11 +144,13 @@ onUnmounted(() => {
 
 <template>
   <div class="feed-container">
-    <FilterTabs 
-      :tabs="homeFilterTabs"
-      :active-filter="activeFilter" 
-      @set-filter="(filter) => activeFilter = filter" 
-    />
+    <div class="sticky-header">
+      <FilterTabs 
+        :tabs="homeFilterTabs"
+        :active-filter="activeFilter" 
+        @set-filter="(filter) => activeFilter = filter" 
+      />
+    </div>
     
     <div v-if="isLoading" class="loading">Caricamento...</div>
     
@@ -178,4 +180,15 @@ onUnmounted(() => {
 .loading-more { display: flex; justify-content: center; padding: 1rem; }
 .spinner { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background-color: rgba(26, 26, 26, 0.8);
+  backdrop-filter: blur(5px);
+  padding: 1rem 1.5rem 1.5rem;
+  max-width: 900px;
+  margin: 0 auto;
+}
 </style>

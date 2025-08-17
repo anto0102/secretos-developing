@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { MoreHorizontal, Trash2, Pencil } from 'lucide-vue-next';
-import { auth } from '../firebase/config';
+import { MoreHorizontal, Trash2, Pencil, UserCircle, Venus, Mars } from 'lucide-vue-next';
+import { auth, db } from '../firebase/config';
+import { getDoc, doc } from 'firebase/firestore';
+import { type Post } from '../types';
 
 const props = defineProps<{
   authorId: string | undefined;
@@ -17,9 +19,37 @@ const emit = defineEmits(['delete-post', 'edit-post']);
 const router = useRouter();
 const isMenuOpen = ref(false);
 const isOwner = computed(() => auth.currentUser?.uid === props.authorId);
+const anonymousPostGender = ref('nonbinary');
+
+const fetchAnonymousGender = async () => {
+  if (props.isAnonymous) {
+    const postDocRef = doc(db, 'posts', props.postId);
+    const postDocSnap = await getDoc(postDocRef);
+    if (postDocSnap.exists()) {
+      const postData = postDocSnap.data() as Post;
+      if (postData.anonymousAuthorGender) {
+        anonymousPostGender.value = postData.anonymousAuthorGender;
+      }
+    }
+  }
+};
+
+const anonymousIcon = computed(() => {
+    if (anonymousPostGender.value === 'male') return Mars;
+    if (anonymousPostGender.value === 'female') return Venus;
+    return UserCircle;
+});
+
+fetchAnonymousGender();
 
 const toggleMenu = () => {
   isMenuOpen.value = !isMenuOpen.value;
+};
+
+const goToProfile = () => {
+  if (!props.isAnonymous) {
+    router.push({ name: 'Profile', params: { userId: props.authorId } });
+  }
 };
 </script>
 
@@ -30,8 +60,8 @@ const toggleMenu = () => {
       <div v-else class="author-avatar-placeholder"></div>
       <span class="author">{{ author }}</span>
     </router-link>
-    <div v-else class="author-link">
-      <div class="author-avatar-placeholder"></div>
+    <div v-else class="author-link is-anonymous-link">
+      <component :is="anonymousIcon" :size="24" class="author-avatar is-anonymous-avatar-icon" />
       <span class="author">{{ author }}</span>
     </div>
 
@@ -39,7 +69,7 @@ const toggleMenu = () => {
       <MoreHorizontal :size="20" class="icon" @click.stop="toggleMenu" />
       <transition name="fade">
         <div v-if="isMenuOpen" class="dropdown-menu" @mouseleave="isMenuOpen = false">
-          <button @click="$emit('edit-post', postId)" class="menu-item edit-item">
+          <button @click="emit('edit-post')" class="menu-item edit-item">
             <Pencil :size="16" /><span>Modifica</span>
           </button>
           <button @click="emit('delete-post')" class="menu-item delete-item">
@@ -64,6 +94,9 @@ const toggleMenu = () => {
   gap: 0.75rem;
   text-decoration: none;
 }
+.author-link.is-anonymous-link {
+    cursor: default;
+}
 .author-avatar,
 .author-avatar-placeholder {
   width: 32px;
@@ -71,6 +104,12 @@ const toggleMenu = () => {
   border-radius: 50%;
   object-fit: cover;
   background-color: #444;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.author-avatar.is-anonymous-avatar-icon {
+    color: #a0a0a0;
 }
 .author {
   color: #a0a0a0;
