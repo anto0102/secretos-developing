@@ -5,11 +5,13 @@ import { MoreHorizontal, Trash2, Pencil, UserCircle, Venus, Mars } from 'lucide-
 import { auth, db } from '../firebase/config';
 import { getDoc, doc } from 'firebase/firestore';
 import { type Post } from '../types';
+import BadgeIcon from './BadgeIcon.vue'; // <-- IMPORTATO
 
 const props = defineProps<{
   authorId: string | undefined;
   author: string | undefined;
   authorAvatarUrl: string | undefined;
+  authorPrimaryBadge?: string; // <-- NUOVA PROP
   isAnonymous: boolean | undefined;
   postId: string;
 }>();
@@ -59,6 +61,7 @@ const goToProfile = () => {
       <img v-if="authorAvatarUrl" :src="authorAvatarUrl" class="author-avatar" alt="Avatar">
       <div v-else class="author-avatar-placeholder"></div>
       <span class="author">{{ author }}</span>
+      <BadgeIcon v-if="authorPrimaryBadge" :badge-id="authorPrimaryBadge" :size="18" />
     </router-link>
     <div v-else class="author-link is-anonymous-link">
       <component :is="anonymousIcon" :size="24" class="author-avatar is-anonymous-avatar-icon" />
@@ -69,10 +72,10 @@ const goToProfile = () => {
       <MoreHorizontal :size="20" class="icon" @click.stop="toggleMenu" />
       <transition name="fade">
         <div v-if="isMenuOpen" class="dropdown-menu" @mouseleave="isMenuOpen = false">
-          <button @click="emit('edit-post')" class="menu-item edit-item">
+          <button @click="$emit('edit-post', postId)" class="menu-item edit-item">
             <Pencil :size="16" /><span>Modifica</span>
           </button>
-          <button @click="emit('delete-post')" class="menu-item delete-item">
+          <button @click="$emit('delete-post')" class="menu-item delete-item">
             <Trash2 :size="16" /><span>Elimina</span>
           </button>
         </div>
@@ -91,7 +94,7 @@ const goToProfile = () => {
 .author-link {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem; /* Ridotto per far spazio al badge */
   text-decoration: none;
 }
 .author-link.is-anonymous-link {

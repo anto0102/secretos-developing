@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { auth, db } from '../firebase/config';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, orderBy, limit, startAfter, DocumentSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, collection, query, where, getDocs, orderBy, limit, startAfter, DocumentSnapshot } from 'firebase/firestore';
 import ProfileHeader from '../components/ProfileHeader.vue';
 import AboutTab from '../components/AboutTab.vue';
 import PostCard from '../components/PostCard.vue';
@@ -30,6 +30,7 @@ const isMoreLoading = ref(false);
 const hasMore = ref(true);
 const sentinelRef = ref<HTMLElement | null>(null);
 let observer: IntersectionObserver;
+let profileUnsubscribe: (() => void) | null = null;
 
 const editingSection = ref<string | null>(null);
 const editableData = ref<any>({});
@@ -65,7 +66,7 @@ const handleFileChange = async (event: Event, type: 'avatar' | 'banner') => {
     const userDocRef = doc(db, "users", props.userId);
     const dataToUpdate = type === 'avatar' ? { avatarUrl: downloadURL } : { bannerUrl: downloadURL };
     await updateDoc(userDocRef, dataToUpdate);
-    userProfile.value = { ...userProfile.value, ...dataToUpdate };
+    // Non è più necessario aggiornare userProfile.value manualmente, onSnapshot lo farà
     showSuccessModal.value = true;
   } catch (error) {
     console.error(`Errore nel caricamento del ${type}:`, error);
@@ -95,7 +96,7 @@ const saveChanges = async () => {
   try {
     const dataToUpdate = { [editingSection.value]: editableData.value[editingSection.value] };
     await updateDoc(userDocRef, dataToUpdate);
-    userProfile.value[editingSection.value] = editableData.value[editingSection.value];
+    // L'aggiornamento sarà automatico grazie a onSnapshot
   } catch (error) {
     console.error("Errore durante il salvataggio:", error);
   } finally {
@@ -108,20 +109,36 @@ const handleUpdateAndSaveField = async ({ field, value }: { field: string, value
   const userDocRef = doc(db, "users", props.userId);
   try {
     await updateDoc(userDocRef, { [field]: value });
-    userProfile.value[field] = value;
+    // L'aggiornamento sarà automatico
     editingSection.value = null;
   } catch (error) {
     console.error(`Errore durante l'aggiornamento del campo ${field}:`, error);
   }
 };
 
-const fetchUserProfile = async (uid: string) => {
-  if (!uid) { isLoading.value = false; userProfile.value = null; return; }
+const fetchUserProfile = (uid: string) => {
+  if (profileUnsubscribe) profileUnsubscribe();
+
+  if (!uid) { 
+    isLoading.value = false; 
+    userProfile.value = null; 
+    return; 
+  }
+  
   isLoading.value = true;
   const docRef = doc(db, "users", uid);
-  const docSnap = await getDoc(docRef);
-  userProfile.value = docSnap.exists() ? docSnap.data() : null;
-  isLoading.value = false;
+
+  profileUnsubscribe = onSnapshot(docRef, (docSnap) => {
+    if (docSnap.exists()) {
+      userProfile.value = { id: docSnap.id, ...docSnap.data() };
+    } else {
+      userProfile.value = null;
+    }
+    isLoading.value = false;
+  }, (error) => {
+    console.error("Errore nel fetch del profilo utente:", error);
+    isLoading.value = false;
+  });
 };
 
 const fetchInitialTabData = async (tab: 'posts' | 'comments') => {
@@ -138,7 +155,6 @@ const fetchInitialTabData = async (tab: 'posts' | 'comments') => {
     limit(10)
   );
 
-  // Aggiungi la condizione per i post anonimi se l'utente non è il proprietario del profilo
   if (tab === 'posts' && !isOwner.value) {
     q = query(collection(db, collectionName), where("authorId", "==", props.userId), where("isAnonymous", "==", false), orderBy("createdAt", "desc"), limit(10));
   }
@@ -210,8 +226,14 @@ const setupObserver = () => {
 };
 
 onMounted(() => fetchUserProfile(props.userId));
-onUnmounted(() => { if (observer) observer.disconnect(); });
-watch(() => props.userId, (newId) => { activeTab.value = 'about'; fetchUserProfile(newId); });
+onUnmounted(() => { 
+  if (observer) observer.disconnect();
+  if (profileUnsubscribe) profileUnsubscribe();
+});
+watch(() => props.userId, (newId) => { 
+  activeTab.value = 'about'; 
+  fetchUserProfile(newId); 
+});
 watch(activeTab, (newTab) => {
   if (newTab === 'posts' || newTab === 'comments') {
     fetchInitialTabData(newTab);

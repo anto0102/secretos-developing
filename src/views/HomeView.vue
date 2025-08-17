@@ -4,17 +4,20 @@ import PostCard from '../components/PostCard.vue';
 import FilterTabs from '../components/FilterTabs.vue';
 import { db } from '../firebase/config';
 import { collection, query, onSnapshot, orderBy, doc, getDoc, limit, startAfter, getDocs, DocumentSnapshot } from 'firebase/firestore';
-import { type Post } from '../types';
+import { type Post, type UserProfile } from '../types';
 import { Loader, Sparkles, Flame, Shuffle } from 'lucide-vue-next';
 
-// Definiamo i filtri specifici per la homepage
+interface PostWithAuthor extends Post {
+  authorProfile?: UserProfile;
+}
+
 const homeFilterTabs = [
   { key: 'new', label: 'Nuovi', icon: Sparkles },
   { key: 'viral', label: 'Virali', icon: Flame },
   { key: 'random', label: 'Random', icon: Shuffle }
 ];
 
-const posts = ref<Post[]>([]);
+const posts = ref<PostWithAuthor[]>([]);
 const isLoading = ref(true);
 const activeFilter = ref<'new' | 'viral' | 'random'>('new');
 const lastVisibleDoc = ref<DocumentSnapshot | null>(null);
@@ -23,6 +26,24 @@ const hasMore = ref(true);
 const sentinelRef = ref<HTMLElement | null>(null);
 let observer: IntersectionObserver;
 let unsubscribe: () => void;
+
+const enrichPostsWithAuthors = async (postsData: Post[]): Promise<PostWithAuthor[]> => {
+    const authorIds = [...new Set(postsData.map(post => post.authorId).filter(Boolean))];
+    if (authorIds.length === 0) return postsData;
+
+    const userDocs = await Promise.all(authorIds.map(id => getDoc(doc(db, "users", id))));
+    const authorProfileMap = new Map<string, UserProfile>();
+    userDocs.forEach(userDoc => {
+        if (userDoc.exists()) {
+          authorProfileMap.set(userDoc.id, userDoc.data() as UserProfile);
+        }
+    });
+    return postsData.map(post => ({
+      ...post,
+      authorProfile: authorProfileMap.get(post.authorId),
+      authorAvatarUrl: authorProfileMap.get(post.authorId)?.avatarUrl || '',
+    }));
+};
 
 const shuffleArray = (array: any[]) => {
   for (let i = array.length - 1; i > 0; i--) {
@@ -41,23 +62,16 @@ const fetchInitialPosts = () => {
   if (unsubscribe) unsubscribe();
 
   const orderByField = activeFilter.value === 'viral' ? 'score' : 'createdAt';
-  const q = query(collection(db, "posts"), orderBy(orderByField, "desc"), limit(5));
+  const q = query(collection(db, "posts"), orderBy(orderByField, "desc"), limit(10));
 
   unsubscribe = onSnapshot(q, async (querySnapshot) => {
     const postsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Post));
     lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
-    const authorIds = [...new Set(postsData.map(post => post.authorId).filter(Boolean))];
-    if (authorIds.length > 0) {
-        const userDocs = await Promise.all(authorIds.map(id => getDoc(doc(db, "users", id))));
-        const avatarMap = new Map();
-        userDocs.forEach(userDoc => {
-            if (userDoc.exists()) avatarMap.set(userDoc.id, userDoc.data().avatarUrl);
-        });
-        posts.value = postsData.map(post => ({ ...post, authorAvatarUrl: avatarMap.get(post.authorId) || '' }));
-    } else { posts.value = postsData; }
+    
+    posts.value = await enrichPostsWithAuthors(postsData);
     
     isLoading.value = false;
-    if (querySnapshot.docs.length < 5) hasMore.value = false;
+    if (querySnapshot.docs.length < 10) hasMore.value = false;
     
     await nextTick();
     setupObserver();
@@ -73,20 +87,7 @@ const fetchAndShufflePosts = async () => {
   const q = query(collection(db, "posts"), orderBy("createdAt", "desc"), limit(30));
   const querySnapshot = await getDocs(q);
   const postsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Post));
-
-  const authorIds = [...new Set(postsData.map(post => post.authorId).filter(Boolean))];
-    if (authorIds.length > 0) {
-        const userDocs = await Promise.all(authorIds.map(id => getDoc(doc(db, "users", id))));
-        const avatarMap = new Map();
-        userDocs.forEach(userDoc => {
-            if (userDoc.exists()) avatarMap.set(userDoc.id, userDoc.data().avatarUrl);
-        });
-        const postsWithAvatars = postsData.map(post => ({ ...post, authorAvatarUrl: avatarMap.get(post.authorId) || '' }));
-        posts.value = shuffleArray(postsWithAvatars);
-    } else { 
-      posts.value = shuffleArray(postsData);
-    }
-  
+  posts.value = shuffleArray(await enrichPostsWithAuthors(postsData));
   isLoading.value = false;
 };
 
@@ -99,17 +100,8 @@ const loadMorePosts = async () => {
   if (!querySnapshot.empty) {
     lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
     const newPostsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Post));
-    const authorIds = [...new Set(newPostsData.map(post => post.authorId).filter(Boolean))];
-    let newPostsWithAvatars = newPostsData;
-    if (authorIds.length > 0) {
-        const userDocs = await Promise.all(authorIds.map(id => getDoc(doc(db, "users", id))));
-        const avatarMap = new Map();
-        userDocs.forEach(userDoc => {
-            if (userDoc.exists()) avatarMap.set(userDoc.id, userDoc.data().avatarUrl);
-        });
-        newPostsWithAvatars = newPostsData.map(post => ({ ...post, authorAvatarUrl: avatarMap.get(post.authorId) || '' }));
-    }
-    posts.value.push(...newPostsWithAvatars);
+    const newPostsWithAuthors = await enrichPostsWithAuthors(newPostsData);
+    posts.value.push(...newPostsWithAuthors);
     if (querySnapshot.docs.length < 5) hasMore.value = false;
   } else { hasMore.value = false; }
   isMoreLoading.value = false;
@@ -175,20 +167,21 @@ onUnmounted(() => {
   margin: 0 auto;
   padding: 1.5rem;
 }
-.loading, .empty-state { text-align: center; padding: 2rem; color: #a0a0a0; }
-.sentinel { height: 20px; }
-.loading-more { display: flex; justify-content: center; padding: 1rem; }
-.spinner { animation: spin 1s linear infinite; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-
 .sticky-header {
   position: sticky;
   top: 0;
   z-index: 50;
   background-color: rgba(26, 26, 26, 0.8);
   backdrop-filter: blur(5px);
-  padding: 1rem 1.5rem 1.5rem;
-  max-width: 900px;
-  margin: 0 auto;
+  padding: 1rem 1.5rem;
+  margin: 0 -1.5rem;
 }
+.posts-list {
+  padding-top: 1rem;
+}
+.loading, .empty-state { text-align: center; padding: 2rem; color: #a0a0a0; }
+.sentinel { height: 20px; }
+.loading-more { display: flex; justify-content: center; padding: 1rem; }
+.spinner { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 </style>

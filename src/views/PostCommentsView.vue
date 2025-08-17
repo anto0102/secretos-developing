@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, nextTick } from 'vue';
 import { db, auth } from '../firebase/config';
-import { collection, query, where, orderBy, getDocs, addDoc, doc, updateDoc, increment, deleteDoc, getDoc as getFirestoreDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
-import { type Comment } from '../types';
+import { collection, query, where, orderBy, getDocs, addDoc, doc, updateDoc, increment, deleteDoc, getDoc as getFirestoreDoc } from 'firebase/firestore';
+import { type Comment, type UserProfile } from '../types';
 import { Loader, Sparkles, Flame } from 'lucide-vue-next';
 import CommentItem from '../components/CommentItem.vue';
 import CommentForm from '../components/CommentForm.vue';
 import { createNotification } from '../firebase/notifications';
 
+interface CommentWithAuthor extends Comment {
+  authorProfile?: UserProfile;
+}
+
 const props = defineProps<{ postId: string, commentId?: string }>();
 
-const comments = ref<Comment[]>([]);
+const comments = ref<CommentWithAuthor[]>([]);
 const isLoading = ref(true);
 const errorMsg = ref('');
 const currentUser = ref<{ username: string, avatarUrl: string } | null>(null);
@@ -58,6 +62,7 @@ const fetchComments = async (id: string, filter: 'new' | 'viral' = 'new') => {
             };
         } else {
             errorMsg.value = "Post non trovato.";
+            isLoading.value = false;
             return;
         }
 
@@ -66,21 +71,23 @@ const fetchComments = async (id: string, filter: 'new' | 'viral' = 'new') => {
         const q = query(commentsRef, where("postId", "==", id), orderBy(orderByField, "desc"));
         const querySnapshot = await getDocs(q);
 
-        const fetchedComments: Comment[] = [];
-        const commentMap = new Map<string, Comment>();
+        const fetchedComments: CommentWithAuthor[] = [];
+        const commentMap = new Map<string, CommentWithAuthor>();
 
         const authorIds = new Set(querySnapshot.docs.map(doc => doc.data().authorId));
         const userDocs = await Promise.all([...authorIds].map(uid => getFirestoreDoc(doc(db, "users", uid))));
-        const userMap = new Map<string, any>();
+        const userMap = new Map<string, UserProfile>();
         userDocs.forEach(userDoc => {
-            if (userDoc.exists()) userMap.set(userDoc.id, userDoc.data());
+            if (userDoc.exists()) userMap.set(userDoc.id, userDoc.data() as UserProfile);
         });
 
         querySnapshot.docs.forEach(d => {
-            const commentData = { ...d.data(), id: d.id, replies: [] } as Comment;
-            const userData = userMap.get(commentData.authorId);
-            commentData.authorUsername = userData?.username || 'Utente Sconosciuto';
-            commentData.authorAvatarUrl = userData?.avatarUrl || '';
+            const commentData = { ...d.data(), id: d.id, replies: [] } as CommentWithAuthor;
+            const authorProfile = userMap.get(commentData.authorId);
+
+            commentData.authorProfile = authorProfile;
+            commentData.authorUsername = authorProfile?.username || 'Utente Sconosciuto';
+            commentData.authorAvatarUrl = authorProfile?.avatarUrl || '';
 
             if (postAuthorDetails.value?.isAnonymous && postAuthorDetails.value?.id === commentData.authorId) {
                 const age = postAuthorDetails.value.birthdate ? `di ${calculateAge(postAuthorDetails.value.birthdate)} anni` : '';
@@ -154,10 +161,9 @@ const submitComment = async (text: string) => {
             const postData = postSnap.data();
             const postAuthorId = postData.authorId;
             
-            const notificationAuthorName = currentUser.value.username; // Usa sempre il nome utente reale per le notifiche
-            const notifiedUsers = new Set<string>(); // Per non notificare lo stesso utente più volte
+            const notificationAuthorName = currentUser.value.username;
+            const notifiedUsers = new Set<string>();
 
-            // Notifica per commento/risposta
             if (replyingTo.value) {
                 if (replyingTo.value.authorId !== user.uid) {
                   const notificationText = `${notificationAuthorName} ha risposto al tuo commento.`;
@@ -170,7 +176,6 @@ const submitComment = async (text: string) => {
                 notifiedUsers.add(postAuthorId);
             }
 
-            // Notifiche per mention
             const mentionRegex = /@(\w+)/g;
             const mentionedUsernames = [...new Set(text.match(mentionRegex)?.map(m => m.substring(1)))];
             if (mentionedUsernames.length > 0) {
@@ -221,18 +226,14 @@ const voteComment = async (payload: { commentId: string, voteType: 'up' | 'down'
     if (!auth.currentUser) return;
     const commentRef = doc(db, "comments", payload.commentId);
     const userId = auth.currentUser.uid;
-    
     const commentDoc = await getFirestoreDoc(commentRef);
     if (!commentDoc.exists()) return;
     const commentData = commentDoc.data();
-    
     let newScore = commentData.score;
     let newUpvotedBy = [...commentData.upvotedBy || []];
     let newDownvotedBy = [...commentData.downvotedBy || []];
-    
     const isUpvoted = newUpvotedBy.includes(userId);
     const isDownvoted = newDownvotedBy.includes(userId);
-
     if (payload.voteType === 'up') {
         if (isUpvoted) {
             newUpvotedBy = newUpvotedBy.filter(id => id !== userId);
@@ -242,11 +243,9 @@ const voteComment = async (payload: { commentId: string, voteType: 'up' | 'down'
             if (isDownvoted) {
                 newDownvotedBy = newDownvotedBy.filter(id => id !== userId);
                 newScore += 2;
-            } else {
-                newScore++;
-            }
+            } else { newScore++; }
         }
-    } else { // 'down'
+    } else {
         if (isDownvoted) {
             newDownvotedBy = newDownvotedBy.filter(id => id !== userId);
             newScore++;
@@ -255,25 +254,19 @@ const voteComment = async (payload: { commentId: string, voteType: 'up' | 'down'
             if (isUpvoted) {
                 newUpvotedBy = newUpvotedBy.filter(id => id !== userId);
                 newScore -= 2;
-            } else {
-                newScore--;
-            }
+            } else { newScore--; }
         }
     }
-    
     await updateDoc(commentRef, { upvotedBy: newUpvotedBy, downvotedBy: newDownvotedBy, score: newScore });
-    
     findAndUpdateComment(comments.value, payload.commentId, newScore, newUpvotedBy, newDownvotedBy);
 };
 
 const deleteComment = async (commentId: string) => {
   if (!confirm("Sei sicuro di voler eliminare questo commento e tutte le sue risposte?")) return;
   try {
-    const commentRef = doc(db, "comments", commentId);
-    await deleteDoc(commentRef);
+    await deleteDoc(doc(db, "comments", commentId));
     const postRef = doc(db, "posts", props.postId);
     await updateDoc(postRef, { commentsCount: increment(-1) });
-
     await fetchComments(props.postId, activeFilter.value);
   } catch (error) {
     console.error("Errore durante l'eliminazione del commento:", error);
@@ -288,10 +281,8 @@ const cancelReply = () => {
     replyingTo.value = null;
 };
 
-onMounted(() => {
-    fetchCurrentUser();
-    fetchComments(props.postId);
-});
+await fetchCurrentUser();
+await fetchComments(props.postId);
 
 watch(activeFilter, (newFilter) => {
   fetchComments(props.postId, newFilter);

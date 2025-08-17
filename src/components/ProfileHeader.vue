@@ -10,7 +10,6 @@ const props = defineProps({
   isOwner: Boolean,
 });
 
-// Corretto: ora emette anche open-settings-menu
 const emit = defineEmits(['triggerFileUpload', 'update:activeTab', 'openSettingsMenu']);
 
 const handleTriggerFileUpload = (type: string) => {

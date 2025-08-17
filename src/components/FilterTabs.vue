@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { defineProps, defineEmits } from 'vue';
 
-// Definiamo che il componente riceve una lista di "tab" da mostrare
 defineProps<{
   tabs: Array<{
     key: string;
     label: string;
-    icon: any; // L'icona viene passata come componente
+    icon: any;
   }>;
   activeFilter: string;
 }>();
@@ -32,6 +31,9 @@ const emit = defineEmits(['setFilter']);
 .filter-tabs {
   display: flex;
   gap: 0.75rem;
+  /* --- MODIFICA CHIAVE --- */
+  /* Rimuoviamo il margine da qui per darne il controllo al genitore */
+  /* margin-bottom: 2rem; */
 }
 button {
   display: flex;

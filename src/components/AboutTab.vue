@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { defineProps, defineEmits, ref, watch } from 'vue';
-import { Pencil, Music, Film, Book, User, Calendar, Star, Gamepad2, Dumbbell, UserRound, Venus, Mars } from 'lucide-vue-next';
+import { Pencil, Music, Film, Book, User, Calendar, Star, Gamepad2, Dumbbell, UserRound, Venus, Mars, Award } from 'lucide-vue-next';
 import FavoritesEditor from './FavoritesEditor.vue';
-import { parseText, handleMentionClick } from '../utils/textParser'; // <-- CORRETTO: import di parseText
+import BadgesManager from './BadgesManager.vue'; // <-- IMPORTATO
+import { parseText, handleMentionClick } from '../utils/textParser';
 import { useRouter } from 'vue-router';
 
 const props = defineProps({
@@ -19,7 +20,7 @@ const router = useRouter();
 
 watch(() => props.userProfile?.bio, async (newBio) => {
     if (newBio) {
-        parsedBio.value = await parseText(newBio); // <-- CORRETTO: usa parseText
+        parsedBio.value = await parseText(newBio);
     } else {
         parsedBio.value = 'Nessuna bio impostata.';
     }
@@ -56,6 +57,11 @@ const updateGender = (gender: 'male' | 'female' | 'nonbinary') => {
       </div>
     </div>
 
+    <div class="section-box">
+      <h3 class="section-header"><Award :size="20" class="header-icon" /> Badge</h3>
+      <BadgesManager :user-profile="userProfile" :is-owner="isOwner" />
+    </div>
+
     <div class="section-box favorites-section">
       <h3 class="section-header"><Star :size="20" class="header-icon" /> Preferiti</h3>
       <div v-if="editingSection !== 'favorites'">
@@ -80,7 +86,7 @@ const updateGender = (gender: 'male' | 'female' | 'nonbinary') => {
         </div>
       </div>
     </div>
-    
+
     <div class="section-box">
       <h3 class="section-header"><UserRound :size="20" class="header-icon" /> Genere</h3>
       <div v-if="editingSection !== 'gender'">
@@ -184,8 +190,6 @@ const updateGender = (gender: 'male' | 'female' | 'nonbinary') => {
 .favorite-item .icon { color: #a0a0a0; flex-shrink: 0; }
 .track-link { color: #fff; background-color: #555; border-radius: 999px; padding: 0.25rem 0.75rem; font-size: 0.8rem; font-weight: bold; text-decoration: none; margin-left: 0.5rem; transition: all 0.2s ease; }
 .track-link:hover { background-color: #777; }
-
-/* Stili per le mention nella Bio */
 .bio-text ::v-deep .mention {
   color: #818cf8;
   font-weight: bold;

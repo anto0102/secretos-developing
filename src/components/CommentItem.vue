@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { defineProps, defineEmits, computed, ref, watch } from 'vue';
+import { defineProps, defineEmits, ref, watch } from 'vue';
 import CommentHeader from './CommentHeader.vue';
 import CommentActions from './CommentActions.vue';
 import CommentReplies from './CommentReplies.vue';
 import { useRouter } from 'vue-router';
-import { parseText, handleMentionClick } from '../utils/textParser'; // Aggiornato
+import { parseText, handleMentionClick } from '../utils/textParser';
+import { type Comment, type UserProfile } from '../types';
+
+interface CommentWithAuthor extends Comment {
+  authorProfile?: UserProfile;
+}
 
 const props = defineProps<{
-  comment: any;
+  comment: CommentWithAuthor;
   areRepliesVisible: boolean;
   postId: string;
   postIsAnonymous: boolean;
@@ -17,10 +22,9 @@ const props = defineProps<{
 const emit = defineEmits(['vote-comment', 'delete-comment', 'reply-request']);
 
 const areRepliesVisibleInternal = ref(props.areRepliesVisible);
-const parsedCommentText = ref(''); // Nuovo ref per il testo parsato
+const parsedCommentText = ref('');
 const router = useRouter();
 
-// Watch per aggiornare il testo del commento
 watch(() => props.comment.text, async (newText) => {
     if (newText) {
         parsedCommentText.value = await parseText(newText);
@@ -44,6 +48,7 @@ const onTextClick = (event: MouseEvent) => {
         :author-avatar-url="comment.authorAvatarUrl"
         :author-username="comment.authorUsername"
         :author-id="comment.authorId"
+        :author-primary-badge="comment.authorProfile?.primaryBadge"
         :reply-count="comment.replies?.length"
         :created-at="comment.createdAt"
         :are-replies-visible="areRepliesVisibleInternal"
@@ -90,7 +95,7 @@ const onTextClick = (event: MouseEvent) => {
   color: #ccc;
   margin: 0.5rem 0;
   line-height: 1.6;
-  padding-left: 52px; /* Aumentato per allineare meglio */
+  padding-left: 52px;
   white-space: pre-wrap;
   word-wrap: break-word;
 }

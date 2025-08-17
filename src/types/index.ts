@@ -1,20 +1,18 @@
 import { Timestamp } from 'firebase/firestore';
 
-/**
- * Definisce la struttura di un Post, incluse le opzioni per i sondaggi.
- */
+// ... Interfacce Post e Comment (invariate) ...
 export interface Post {
   id: string;
   author: string;
   authorId: string;
   text: string;
   score: number;
-  mediaUrl?: string; // <-- MODIFICATO: ora è l'URL di media generico
-  mediaType?: 'image' | 'video'; // <-- NUOVO: per distinguere tra immagine e video
-  isMediaSpoiler?: boolean; // <-- NUOVO: indica se il media è oscurato
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video';
+  isMediaSpoiler?: boolean;
   isEdited?: boolean;
   editedAt?: Timestamp;
-  pollEndDate?: Timestamp; // <-- AGGIUNTO: Data di fine del sondaggio
+  pollEndDate?: Timestamp;
   commentsCount: number;
   createdAt?: Timestamp;
   upvotedBy: string[];
@@ -32,13 +30,10 @@ export interface Post {
   pollSettings?: {
     voteType: 'single' | 'multiple';
     resultsVisibility: 'always' | 'after_vote';
-    voteVisibility: 'public' | 'anonymous'; // <-- NUOVA IMPOSTAZIONE
+    voteVisibility: 'public' | 'anonymous';
   };
 }
 
-/**
- * Definisce la struttura di un Commento.
- */
 export interface Comment {
     id: string;
     postId: string;
@@ -53,6 +48,7 @@ export interface Comment {
     parentId?: string | null;
     replies?: Comment[];
 }
+
 
 /**
  * Definisce la struttura del profilo di un Utente.
@@ -79,4 +75,8 @@ export interface UserProfile {
     };
     videogame?: string;
     sport?: string;
+
+    // --- NUOVI CAMPI PER I BADGE ---
+    badges?: string[]; // Array di ID dei badge ottenuti (es. ['pioneer', 'popular'])
+    primaryBadge?: string; // L'ID del badge scelto come primario (es. 'popular')
 }

@@ -6,11 +6,13 @@ import { useRouter } from 'vue-router';
 import { formatTimeAgo } from '../utils/dateUtils';
 import { doc, getDoc } from 'firebase/firestore';
 import { type Post } from '../types';
+import BadgeIcon from './BadgeIcon.vue'; // <-- IMPORTATO
 
 const props = defineProps<{
   authorAvatarUrl?: string;
   authorUsername: string;
   authorId: string;
+  authorPrimaryBadge?: string; // <-- NUOVA PROP
   replyCount?: number;
   areRepliesVisible: boolean;
   createdAt: any;
@@ -73,6 +75,7 @@ const toggleMenu = () => {
         <img v-if="authorAvatarUrl" :src="authorAvatarUrl" class="comment-avatar" alt="Avatar">
         <div v-else class="comment-avatar-placeholder"></div>
         <span class="comment-author">{{ authorUsername }}</span>
+        <BadgeIcon v-if="authorPrimaryBadge" :badge-id="authorPrimaryBadge" :size="18" />
       </router-link>
       <span class="comment-timestamp">{{ formatTimeAgo(createdAt) }}</span>
     </div>
@@ -103,7 +106,7 @@ const toggleMenu = () => {
 
 <style scoped>
 .comment-header-row { display: flex; align-items: center; justify-content: space-between; }
-.author-info { display: flex; align-items: center; gap: 0.75rem; }
+.author-info { display: flex; align-items: center; gap: 0.5rem; /* Ridotto */ }
 .comment-avatar, .comment-avatar-placeholder { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background-color: #444; }
 .comment-avatar.is-anonymous-avatar-icon { color: #a0a0a0; }
 .author-link { text-decoration: none; display: flex; align-items: center; gap: 0.5rem; }

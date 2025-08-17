@@ -4,20 +4,23 @@ import { db, auth } from '../firebase/config';
 import { doc, deleteDoc, updateDoc, arrayRemove, arrayUnion, increment, onSnapshot, getDoc } from 'firebase/firestore';
 import { useRouter } from 'vue-router';
 import { X, CheckCircle, Eye } from 'lucide-vue-next';
-import { type Post } from '../types';
+import { type Post, type UserProfile } from '../types';
 import PostHeader from './PostHeader.vue';
 import PostMedia from './PostMedia.vue';
 import PostFooter from './PostFooter.vue';
 import { formatTimeAgo } from '../utils/dateUtils';
-import { parseText, handleMentionClick } from '../utils/textParser'; // Corretto l'import
+import { parseText, handleMentionClick } from '../utils/textParser';
 
-const props = defineProps<{ post: Post }>();
+interface PostWithAuthor extends Post {
+  authorProfile?: UserProfile;
+}
+
+const props = defineProps<{ post: PostWithAuthor }>();
 const router = useRouter();
 
-const livePost = ref<Post | null>(null);
-const parsedPostText = ref(''); // Ref per contenere l'HTML generato
+const livePost = ref<PostWithAuthor | null>(null);
+const parsedPostText = ref('');
 
-// Watch per aggiornare il testo parsato quando il post cambia
 watch(() => livePost.value?.text, async (newText) => {
   const textToParse = newText || props.post.text;
   if (textToParse) {
@@ -40,7 +43,7 @@ const setupPostListener = (id: string) => {
   const postRef = doc(db, 'posts', id);
   unsubscribe = onSnapshot(postRef, (docSnap) => {
     if (docSnap.exists()) {
-      livePost.value = { ...props.post, ...docSnap.data(), id: docSnap.id } as Post;
+      livePost.value = { ...props.post, ...docSnap.data(), id: docSnap.id } as PostWithAuthor;
     } else {
       livePost.value = null;
     }
@@ -49,13 +52,14 @@ const setupPostListener = (id: string) => {
 
 const setupPollExpirationTimeout = () => {
     if (timeoutId) clearTimeout(timeoutId);
-    if (!livePost.value?.isPoll || !livePost.value?.pollEndDate) {
+    const postData = livePost.value || props.post;
+    if (!postData.isPoll || !postData.pollEndDate) {
         isPollExpiredRef.value = false;
         return;
     }
 
     const now = new Date();
-    const endDate = livePost.value.pollEndDate.toDate();
+    const endDate = postData.pollEndDate.toDate();
     const timeRemaining = endDate.getTime() - now.getTime();
 
     if (timeRemaining <= 0) {
@@ -70,6 +74,7 @@ const setupPollExpirationTimeout = () => {
 
 onMounted(() => {
   setupPostListener(props.post.id);
+  setupPollExpirationTimeout();
 });
 
 onUnmounted(() => {
@@ -118,9 +123,7 @@ const showResults = computed(() => {
 });
 
 const handleVoteOnPoll = (selectedIndex: number) => {
-  if (isPollExpired.value) {
-    return;
-  }
+  if (isPollExpired.value) return;
   voteOnPoll(selectedIndex);
 };
 
@@ -128,14 +131,12 @@ const voteOnPoll = async (selectedIndex: number) => {
   if (!auth.currentUser || !postData.value) return;
   const postRef = doc(db, "posts", postData.value.id);
   const userId = auth.currentUser.uid;
-  
   const postSnap = await getDoc(postRef);
   if (!postSnap.exists()) return;
 
   let currentPost = postSnap.data() as Post;
   if (!currentPost.pollOptions) return;
   let currentOptions = JSON.parse(JSON.stringify(currentPost.pollOptions));
-  
   const voteType = currentPost.pollSettings?.voteType || 'single';
   const hasVotedThisOption = currentOptions[selectedIndex].votedBy?.includes(userId);
 
@@ -159,7 +160,6 @@ const voteOnPoll = async (selectedIndex: number) => {
     if (!currentOptions[selectedIndex].votedBy) currentOptions[selectedIndex].votedBy = [];
     currentOptions[selectedIndex].votedBy.push(userId);
   }
-  
   await updateDoc(postRef, { pollOptions: currentOptions });
 };
 
@@ -201,13 +201,9 @@ const showVoters = async () => {
   const uniqueVoterIds = [...new Set(allVoterIds)];
 
   if (uniqueVoterIds.length === 0) {
-    votersList.value = postData.value.pollOptions.map(option => ({
-      optionText: option.text,
-      users: []
-    }));
+    votersList.value = postData.value.pollOptions.map(option => ({ optionText: option.text, users: [] }));
     return;
   }
-
   const userDocs = await Promise.all(uniqueVoterIds.map(id => getDoc(doc(db, "users", id))));
   const usersMap = new Map();
   userDocs.forEach(userDoc => {
@@ -216,7 +212,6 @@ const showVoters = async () => {
       usersMap.set(userDoc.id, { id: userDoc.id, username: data.username, avatarUrl: data.avatarUrl });
     }
   });
-
   votersList.value = postData.value.pollOptions.map(option => ({
     optionText: option.text,
     users: (option.votedBy || []).map(id => usersMap.get(id)).filter(Boolean)
@@ -240,7 +235,8 @@ const onTextClick = (event: MouseEvent) => {
     <PostHeader
       :author-id="postData.authorId"
       :author="postData.author"
-      :author-avatar-url="postData.authorAvatarUrl"
+      :author-avatar-url="postData.authorProfile?.avatarUrl"
+      :author-primary-badge="postData.authorProfile?.primaryBadge"
       :is-anonymous="postData.isAnonymous"
       :post-id="postData.id"
       @delete-post="handleDeletePost"
