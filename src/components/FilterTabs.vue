@@ -28,8 +28,8 @@ const emit = defineEmits(['setFilter', 'open-modal']);
         <span>{{ tab.label }}</span>
       </button>
 
-      <button 
-        v-if="showMoreButton" 
+      <button
+        v-if="showMoreButton"
         @click="emit('open-modal')"
         class="more-btn"
       >
@@ -42,6 +42,11 @@ const emit = defineEmits(['setFilter', 'open-modal']);
 <style scoped>
 .filter-tabs-container {
     width: 100%;
+    overflow-x: auto; /* Aggiunto per sicurezza su schermi piccolissimi */
+    scrollbar-width: none; /* Nasconde la scrollbar */
+}
+.filter-tabs-container::-webkit-scrollbar {
+    display: none; /* Nasconde la scrollbar su WebKit */
 }
 .filter-tabs {
   display: flex;
@@ -52,7 +57,8 @@ button {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.6rem 1.2rem;
+  /* --- MODIFICA QUI: Ridotto il padding orizzontale --- */
+  padding: 0.6rem 1rem;
   border: 1px solid #363636;
   background-color: #2a2a2a;
   color: #a0a0a0;
@@ -61,7 +67,7 @@ button {
   font-weight: bold;
   font-size: 0.9rem;
   transition: all 0.2s ease-in-out;
-  flex-shrink: 0; 
+  flex-shrink: 0;
 }
 button:hover {
   background-color: #363636;

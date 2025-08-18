@@ -66,24 +66,53 @@ const handleNotificationClick = () => {
 </template>
 
 <style>
-/* Gli stili rimangono invariati */
+/* Stili globali */
 body {
   background-color: #1a1a1a;
   color: #e0e0e0;
   font-family: 'Inter', sans-serif;
   margin: 0;
+  overscroll-behavior-y: contain;
 }
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
-.app-layout { display: flex; }
-.main-content { flex-grow: 1; padding-bottom: 60px; }
+
+.app-layout {
+  display: flex;
+}
+
+.main-content {
+  flex-grow: 1;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  /* --- MODIFICA QUI: Rimosso il padding-bottom --- */
+}
+
+/* Di default (mobile), la sidebar è nascosta e la bottom nav è visibile */
 .sidebar-container { display: none; }
 .bottom-nav-container { display: block; }
+
 @media (min-width: 768px) {
-  .app-layout { height: 100vh; overflow: hidden; }
-  .sidebar-container { display: block; flex-shrink: 0; }
-  .main-content { flex-grow: 1; overflow-y: auto; height: 100vh; padding-bottom: 0; }
+  .app-layout {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .sidebar-container { 
+    display: block; 
+    flex-shrink: 0;
+  }
+
+  .main-content {
+    flex-grow: 1;
+    overflow-y: auto;
+    height: 100vh;
+    padding-bottom: 0;
+  }
+
   .bottom-nav-container { display: none; }
 }
+
 .suspense-loader {
   display: flex;
   flex-direction: column;

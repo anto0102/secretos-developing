@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
 import { defineProps, defineEmits } from 'vue';
 import { useRouter } from 'vue-router';
 import { X } from 'lucide-vue-next';
@@ -18,74 +17,12 @@ const goToProfile = (userId: string) => {
   router.push({ name: 'Profile', params: { userId } });
   emit('close');
 };
-
-// --- INIZIO LOGICA ANIMAZIONE JAVASCRIPT ---
-const onEnter = (el: Element, done: () => void) => {
-  const overlay = el as HTMLElement;
-  const container = el.querySelector('.modal-container') as HTMLElement;
-  
-  const animation = overlay.animate([{ opacity: 0 }, { opacity: 1 }], {
-    duration: 300,
-    easing: 'ease',
-  });
-  
-  container.animate(
-    [{ transform: 'translateY(100%)' }, { transform: 'translateY(0)' }],
-    {
-      duration: 400,
-      easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
-    }
-  );
-
-  animation.onfinish = done;
-};
-
-const onLeave = (el: Element, done: () => void) => {
-  const overlay = el as HTMLElement;
-  const container = el.querySelector('.modal-container') as HTMLElement;
-
-  const animation = overlay.animate([{ opacity: 1 }, { opacity: 0 }], {
-    duration: 300,
-    easing: 'ease',
-  });
-  
-  container.animate(
-    [{ transform: 'translateY(0)' }, { transform: 'translateY(100%)' }],
-    {
-      duration: 400,
-      easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
-    }
-  );
-
-  animation.onfinish = done;
-};
-// --- FINE LOGICA ANIMAZIONE JAVASCRIPT ---
-
-// La logica per il trascinamento rimane invariata
-const modalRef = ref<HTMLElement | null>(null);
-const isDragging = ref(false);
-const startY = ref(0);
-const currentTranslateY = ref(0);
-const onTouchStart = (event: TouchEvent) => { /* ... codice invariato ... */ };
-const onTouchMove = (event: TouchEvent) => { /* ... codice invariato ... */ };
-const onTouchEnd = () => { /* ... codice invariato ... */ };
-onMounted(() => { /* ... codice invariato ... */ });
-onUnmounted(() => { /* ... codice invariato ... */ });
 </script>
 
 <template>
-  <transition
-    name="modal"
-    :css="false"
-    @enter="onEnter"
-    @leave="onLeave"
-  >
+  <transition name="modal">
     <div class="modal-overlay" @click.self="emit('close')">
-      <div
-        ref="modalRef"
-        class="modal-container"
-        @touchstart.passive="onTouchStart"
-      >
+      <div class="modal-container">
         <div class="drag-handle"></div>
         <button @click="emit('close')" class="close-btn">
           <X :size="24" />
@@ -108,7 +45,26 @@ onUnmounted(() => { /* ... codice invariato ... */ });
 </template>
 
 <style scoped>
-/* Abbiamo rimosso tutte le classi di animazione (es. .modal-enter-active) */
+/* Stili per le animazioni */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.3s ease;
+}
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+.modal-enter-active .modal-container,
+.modal-leave-active .modal-container {
+  transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.modal-enter-from .modal-container,
+.modal-leave-to .modal-container {
+  transform: translateY(100%);
+}
+
+
+/* Stili esistenti (invariati) */
 .modal-overlay {
   position: fixed; top: 0; left: 0; width: 100%; height: 100%;
   background-color: rgba(0, 0, 0, 0.7); display: flex;
@@ -142,8 +98,9 @@ onUnmounted(() => { /* ... codice invariato ... */ });
 .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
 .username { font-weight: bold; color: #fff; }
 .loader, .empty-state { text-align: center; padding: 2rem; color: #a0a0a0; }
+
 @media (min-width: 768px) {
   .modal-overlay { align-items: center; }
-  .modal-container { border-radius: 12px; }
+  .modal-container { border-radius: 12px; transform: translateY(0) !important; }
 }
 </style>
