@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { defineProps, defineEmits } from 'vue';
+import { Plus } from 'lucide-vue-next';
 
 defineProps<{
   tabs: Array<{
@@ -8,32 +9,44 @@ defineProps<{
     icon: any;
   }>;
   activeFilter: string;
+  showMoreButton: boolean;
 }>();
 
-const emit = defineEmits(['setFilter']);
+const emit = defineEmits(['setFilter', 'open-modal']);
 </script>
 
 <template>
-  <div class="filter-tabs">
-    <button
-      v-for="tab in tabs"
-      :key="tab.key"
-      :class="{ active: activeFilter === tab.key }"
-      @click="emit('setFilter', tab.key)"
-    >
-      <component :is="tab.icon" :size="18" />
-      <span>{{ tab.label }}</span>
-    </button>
+  <div class="filter-tabs-container">
+    <div class="filter-tabs">
+      <button
+        v-for="tab in tabs"
+        :key="tab.key"
+        :class="{ active: activeFilter === tab.key }"
+        @click="emit('setFilter', tab.key)"
+      >
+        <component :is="tab.icon" :size="18" />
+        <span>{{ tab.label }}</span>
+      </button>
+
+      <button 
+        v-if="showMoreButton" 
+        @click="emit('open-modal')"
+        class="more-btn"
+      >
+        <Plus :size="20" />
+      </button>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.filter-tabs-container {
+    width: 100%;
+}
 .filter-tabs {
   display: flex;
+  align-items: center;
   gap: 0.75rem;
-  /* --- MODIFICA CHIAVE --- */
-  /* Rimuoviamo il margine da qui per darne il controllo al genitore */
-  /* margin-bottom: 2rem; */
 }
 button {
   display: flex;
@@ -48,6 +61,7 @@ button {
   font-weight: bold;
   font-size: 0.9rem;
   transition: all 0.2s ease-in-out;
+  flex-shrink: 0; 
 }
 button:hover {
   background-color: #363636;
@@ -61,8 +75,11 @@ button.active {
   border-color: transparent;
   box-shadow: 0 4px 15px rgba(79, 70, 229, 0.4);
 }
-button.active:hover {
-  transform: translateY(-2px) scale(1.05);
-  filter: brightness(1.1);
+.more-btn {
+    padding: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    justify-content: center;
 }
 </style>

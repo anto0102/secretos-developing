@@ -1,6 +1,6 @@
 import {onDocumentCreated, onDocumentUpdated} from "firebase-functions/v2/firestore";
 import {onSchedule} from "firebase-functions/v2/scheduler";
-import {onCall} from "firebase-functions/v2/https";
+import {onCall, HttpsError} from "firebase-functions/v2/https"; // <-- Importa HttpsError
 import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 
@@ -91,12 +91,66 @@ export const onPostUpdate = onDocumentUpdated("posts/{postId}", async (event) =>
   }
 });
 
-// --- NUOVA FUNZIONE PER LA RETROCOMPATIBILITÀ ---
+// --- NUOVA FUNZIONE PER IL FOLLOW ---
 
 /**
- * Funzione chiamabile per analizzare tutti gli utenti e assegnare i badge
- * in base ai loro dati storici.
+ * Funzione chiamabile per seguire o smettere di seguire un utente.
  */
+export const toggleFollow = onCall(async (request) => {
+  const currentUserId = request.auth?.uid;
+  const targetUserId = request.data.userId;
+
+  if (!currentUserId) {
+    throw new HttpsError("unauthenticated", "Devi essere loggato per eseguire questa operazione.");
+  }
+  if (!targetUserId) {
+    throw new HttpsError("invalid-argument", "L'ID dell'utente target è mancante.");
+  }
+  if (currentUserId === targetUserId) {
+    throw new HttpsError("invalid-argument", "Non puoi seguire te stesso.");
+  }
+
+  const currentUserRef = db.collection("users").doc(currentUserId);
+  const targetUserRef = db.collection("users").doc(targetUserId);
+  const currentUserDoc = await currentUserRef.get();
+  const currentUserData = currentUserDoc.data();
+
+  if (!currentUserData) {
+    throw new HttpsError("not-found", "Utente corrente non trovato.");
+  }
+
+  const isFollowing = currentUserData.following?.includes(targetUserId);
+  const batch = db.batch();
+
+  if (isFollowing) {
+    // Unfollow
+    batch.update(currentUserRef, {following: admin.firestore.FieldValue.arrayRemove(targetUserId)});
+    batch.update(targetUserRef, {followers: admin.firestore.FieldValue.arrayRemove(currentUserId)});
+  } else {
+    // Follow
+    batch.update(currentUserRef, {following: admin.firestore.FieldValue.arrayUnion(targetUserId)});
+    batch.update(targetUserRef, {followers: admin.firestore.FieldValue.arrayUnion(currentUserId)});
+
+    // Crea notifica
+    const notificationText = `${currentUserData.username} ha iniziato a seguirti.`;
+    const notificationRef = db.collection("notifications").doc();
+    batch.set(notificationRef, {
+      recipientId: targetUserId,
+      type: "follow",
+      postId: currentUserId, // Usiamo l'ID di chi segue come riferimento
+      text: notificationText,
+      isRead: false,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+
+  await batch.commit();
+  return {success: true, newState: isFollowing ? "unfollowed" : "followed"};
+});
+
+
+// --- FUNZIONE PER LA RETROCOMPATIBILITÀ DEI BADGE ---
+
 export const checkBadgesRetroactively = onCall(async (request) => {
   logger.log("Inizio controllo retroattivo dei badge per tutti gli utenti.");
 
@@ -107,28 +161,17 @@ export const checkBadgesRetroactively = onCall(async (request) => {
     const userId = userDoc.id;
     const userBadges = userDoc.data().badges || [];
 
-    // 1. Controlla badge Pioniere (>= 1 post)
     if (!userBadges.includes("pioneer")) {
-      const postsSnap = await db.collection("posts")
-        .where("authorId", "==", userId).limit(1).get();
-      if (postsSnap.size > 0) {
-        await grantBadge(userId, "pioneer");
-      }
+      const postsSnap = await db.collection("posts").where("authorId", "==", userId).limit(1).get();
+      if (postsSnap.size > 0) await grantBadge(userId, "pioneer");
     }
 
-    // 2. Controlla badge Chiacchierone (>= 50 commenti)
     if (!userBadges.includes("chatterbox")) {
-      const commentsSnap = await db.collection("comments")
-        .where("authorId", "==", userId).limit(50).get();
-      if (commentsSnap.size >= 50) {
-        await grantBadge(userId, "chatterbox");
-      }
+      const commentsSnap = await db.collection("comments").where("authorId", "==", userId).limit(50).get();
+      if (commentsSnap.size >= 50) await grantBadge(userId, "chatterbox");
     }
 
-    // 3. Controlla badge Popolare e Re del Segreto
-    const userPosts = await db.collection("posts")
-      .where("authorId", "==", userId).get();
-
+    const userPosts = await db.collection("posts").where("authorId", "==", userId).get();
     let hasPopular = userBadges.includes("popular");
     let hasKing = userBadges.includes("king");
 
@@ -152,7 +195,6 @@ export const checkBadgesRetroactively = onCall(async (request) => {
   return {status: "success", message: message};
 });
 
-
 export const onPollEnd = onSchedule("every 5 minutes", async () => {
   const now = new Date();
   const pollsQuery = db.collection("posts")
@@ -161,7 +203,6 @@ export const onPollEnd = onSchedule("every 5 minutes", async () => {
     .where("pollEndDate", "<=", now);
 
   const expiredPollsSnapshot = await pollsQuery.get();
-
   if (expiredPollsSnapshot.empty) {
     logger.log("Nessun sondaggio scaduto trovato.");
     return;
@@ -170,9 +211,7 @@ export const onPollEnd = onSchedule("every 5 minutes", async () => {
   const promises = expiredPollsSnapshot.docs.map(async (doc) => {
     const post = doc.data();
     const postId = doc.id;
-    const allVoterIds = post.pollOptions.flatMap(
-      (opt: { votedBy: string[] }) => opt.votedBy || [],
-    );
+    const allVoterIds = post.pollOptions.flatMap((opt: { votedBy: string[] }) => opt.votedBy || []);
     const uniqueVoterIds = [...new Set(allVoterIds)];
 
     const notificationPromises = uniqueVoterIds.map((userId) => {

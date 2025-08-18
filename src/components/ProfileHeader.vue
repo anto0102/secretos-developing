@@ -8,9 +8,13 @@ const props = defineProps({
   isUploading: String,
   activeTab: String,
   isOwner: Boolean,
+  isFollowing: Boolean,
+  isFollowLoading: Boolean,
+  followersCount: Number,
+  followingCount: Number,
 });
 
-const emit = defineEmits(['triggerFileUpload', 'update:activeTab', 'openSettingsMenu']);
+const emit = defineEmits(['triggerFileUpload', 'update:activeTab', 'openSettingsMenu', 'toggle-follow', 'show-follow-list']); // <-- Aggiungi l'evento
 
 const handleTriggerFileUpload = (type: string) => {
     emit('triggerFileUpload', type);
@@ -19,6 +23,11 @@ const handleTriggerFileUpload = (type: string) => {
 const handleUpdateActiveTab = (tab: string) => {
     emit('update:activeTab', tab);
 };
+
+// --- NUOVA FUNZIONE PER PASSARE L'EVENTO ---
+const handleShowFollowList = (type: 'followers' | 'following') => {
+    emit('show-follow-list', type);
+}
 </script>
 
 <template>
@@ -36,9 +45,15 @@ const handleUpdateActiveTab = (tab: string) => {
         :is-uploading="isUploading"
         :active-tab="activeTab"
         :is-owner="isOwner"
+        :is-following="isFollowing"
+        :is-follow-loading="isFollowLoading"
+        :followers-count="followersCount"
+        :following-count="followingCount"
         @trigger-file-upload="handleTriggerFileUpload"
         @update:active-tab="handleUpdateActiveTab"
         @open-settings-menu="emit('openSettingsMenu')"
+        @toggle-follow="emit('toggle-follow')"
+        @show-follow-list="handleShowFollowList" 
       />
     </div>
   </header>
@@ -50,7 +65,8 @@ const handleUpdateActiveTab = (tab: string) => {
   margin-bottom: 2rem;
 }
 .user-info-wrapper {
-    margin-top: -65px;
+    margin-top: -80px; 
     position: relative;
+    padding: 0 1rem;
 }
 </style>

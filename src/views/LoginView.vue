@@ -52,12 +52,14 @@ const register = async () => {
     const user = userCredential.user;
 
     // --- MODIFICA QUI ---
-    // Aggiungiamo il campo 'avatarUrl' con un link a un'immagine predefinita.
+    // Aggiungiamo i campi 'avatarUrl', 'following', e 'followers'
     await setDoc(doc(db, "users", user.uid), {
       username: username.value,
       email: user.email,
       createdAt: new Date(),
-      avatarUrl: 'https://static.vecteezy.com/system/resources/thumbnails/009/292/244/small/default-avatar-icon-of-social-media-user-vector.jpg'
+      avatarUrl: 'https://static.vecteezy.com/system/resources/thumbnails/009/292/244/small/default-avatar-icon-of-social-media-user-vector.jpg',
+      following: [],
+      followers: []
     });
 
     router.push('/');

@@ -2,11 +2,14 @@
 import { ref, onMounted, onUnmounted, watch, computed, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { auth, db } from '../firebase/config';
-import { doc, onSnapshot, updateDoc, collection, query, where, getDocs, orderBy, limit, startAfter, DocumentSnapshot } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+// --- ECCO LA CORREZIONE: Aggiunto 'getDoc' alla lista degli import ---
+import { doc, onSnapshot, updateDoc, collection, query, where, getDocs, getDoc, orderBy, limit, startAfter, DocumentSnapshot } from 'firebase/firestore';
 import ProfileHeader from '../components/ProfileHeader.vue';
 import AboutTab from '../components/AboutTab.vue';
 import PostCard from '../components/PostCard.vue';
-import { type Post } from '../types';
+import FollowListModal from '../components/FollowListModal.vue';
+import { type Post, type UserProfile } from '../types';
 import { Loader, ArrowRight } from 'lucide-vue-next';
 import { formatTimeAgo } from '../utils/dateUtils';
 import { uploadBytes, getDownloadURL, ref as storageRef } from 'firebase/storage';
@@ -17,7 +20,8 @@ import SettingsMenu from '../components/SettingsMenu.vue';
 const props = defineProps<{ userId: string }>();
 const router = useRouter();
 
-const userProfile = ref<any>(null);
+const userProfile = ref<UserProfile | null>(null);
+const loggedInUserProfile = ref<UserProfile | null>(null);
 const isLoading = ref(true);
 const isOwner = computed(() => auth.currentUser && auth.currentUser.uid === props.userId);
 const activeTab = ref<'about' | 'posts' | 'comments'>('about');
@@ -31,6 +35,7 @@ const hasMore = ref(true);
 const sentinelRef = ref<HTMLElement | null>(null);
 let observer: IntersectionObserver;
 let profileUnsubscribe: (() => void) | null = null;
+let loggedInUserUnsubscribe: (() => void) | null = null;
 
 const editingSection = ref<string | null>(null);
 const editableData = ref<any>({});
@@ -40,6 +45,63 @@ const avatarInputRef = ref<HTMLInputElement | null>(null);
 const bannerInputRef = ref<HTMLInputElement | null>(null);
 const showSuccessModal = ref(false);
 const isSettingsMenuOpen = ref(false);
+
+const isFollowModalOpen = ref(false);
+const followModalTitle = ref('');
+const usersToShow = ref<UserProfile[]>([]);
+const isFollowModalLoading = ref(false);
+
+const showFollowList = async (type: 'followers' | 'following') => {
+    if (!userProfile.value) return;
+
+    isFollowModalOpen.value = true;
+    isFollowModalLoading.value = true;
+    usersToShow.value = [];
+    followModalTitle.value = type === 'followers' ? 'Follower' : 'Seguiti';
+    
+    const userIds = (userProfile.value as any)[type] || [];
+
+    try {
+        if (userIds.length > 0) {
+            const userDocsPromises = userIds.slice(0, 30).map((id: string) => getDoc(doc(db, "users", id)));
+            const userDocsSnapshots = await Promise.all(userDocsPromises);
+            
+            usersToShow.value = userDocsSnapshots
+                .filter(snap => snap.exists())
+                .map(snap => ({ id: snap.id, ...snap.data() } as UserProfile));
+        }
+    } catch (error) {
+        console.error("Errore nel caricare la lista di utenti:", error);
+    } finally {
+        isFollowModalLoading.value = false;
+    }
+};
+
+const isFollowLoading = ref(false); 
+
+const isFollowing = computed(() => {
+  if (!loggedInUserProfile.value || !loggedInUserProfile.value.following) return false;
+  return loggedInUserProfile.value.following.includes(props.userId);
+});
+
+const followersCount = computed(() => userProfile.value?.followers?.length || 0);
+const followingCount = computed(() => userProfile.value?.following?.length || 0);
+
+const toggleFollow = async () => {
+    const currentUser = auth.currentUser;
+    if (!currentUser || isOwner.value || isFollowLoading.value) return;
+
+    isFollowLoading.value = true;
+    try {
+        const functions = getFunctions();
+        const toggleFollowCallable = httpsCallable(functions, 'toggleFollow');
+        await toggleFollowCallable({ userId: props.userId });
+    } catch (error) {
+        console.error("Errore durante l'operazione di follow:", error);
+    } finally {
+        isFollowLoading.value = false;
+    }
+};
 
 const triggerFileUpload = (type: 'avatar' | 'banner') => {
   if (!isOwner.value || isUploading.value) return;
@@ -55,18 +117,15 @@ const handleFileChange = async (event: Event, type: 'avatar' | 'banner') => {
   if (!file || !isOwner.value) return;
 
   isUploading.value = type;
-
   const storagePath = `users/${props.userId}/${type}/${file.name}`;
   const fileRef = storageRef(storage, storagePath);
 
   try {
     const snapshot = await uploadBytes(fileRef, file);
     const downloadURL = await getDownloadURL(snapshot.ref);
-
     const userDocRef = doc(db, "users", props.userId);
     const dataToUpdate = type === 'avatar' ? { avatarUrl: downloadURL } : { bannerUrl: downloadURL };
     await updateDoc(userDocRef, dataToUpdate);
-    // Non è più necessario aggiornare userProfile.value manualmente, onSnapshot lo farà
     showSuccessModal.value = true;
   } catch (error) {
     console.error(`Errore nel caricamento del ${type}:`, error);
@@ -96,7 +155,6 @@ const saveChanges = async () => {
   try {
     const dataToUpdate = { [editingSection.value]: editableData.value[editingSection.value] };
     await updateDoc(userDocRef, dataToUpdate);
-    // L'aggiornamento sarà automatico grazie a onSnapshot
   } catch (error) {
     console.error("Errore durante il salvataggio:", error);
   } finally {
@@ -109,7 +167,6 @@ const handleUpdateAndSaveField = async ({ field, value }: { field: string, value
   const userDocRef = doc(db, "users", props.userId);
   try {
     await updateDoc(userDocRef, { [field]: value });
-    // L'aggiornamento sarà automatico
     editingSection.value = null;
   } catch (error) {
     console.error(`Errore durante l'aggiornamento del campo ${field}:`, error);
@@ -118,19 +175,16 @@ const handleUpdateAndSaveField = async ({ field, value }: { field: string, value
 
 const fetchUserProfile = (uid: string) => {
   if (profileUnsubscribe) profileUnsubscribe();
-
   if (!uid) { 
     isLoading.value = false; 
     userProfile.value = null; 
     return; 
   }
-  
   isLoading.value = true;
   const docRef = doc(db, "users", uid);
-
   profileUnsubscribe = onSnapshot(docRef, (docSnap) => {
     if (docSnap.exists()) {
-      userProfile.value = { id: docSnap.id, ...docSnap.data() };
+      userProfile.value = { id: docSnap.id, ...docSnap.data() } as UserProfile;
     } else {
       userProfile.value = null;
     }
@@ -141,12 +195,25 @@ const fetchUserProfile = (uid: string) => {
   });
 };
 
+const setupLoggedInUserListener = (uid: string | null) => {
+    if(loggedInUserUnsubscribe) loggedInUserUnsubscribe();
+    if (uid) {
+        const userDocRef = doc(db, "users", uid);
+        loggedInUserUnsubscribe = onSnapshot(userDocRef, (docSnap) => {
+            if (docSnap.exists()) {
+                loggedInUserProfile.value = docSnap.data() as UserProfile;
+            }
+        });
+    } else {
+        loggedInUserProfile.value = null;
+    }
+};
+
 const fetchInitialTabData = async (tab: 'posts' | 'comments') => {
   if (!userProfile.value) return;
   isTabLoading.value = true;
   hasMore.value = true;
   lastVisibleDoc.value = null;
-
   const collectionName = tab;
   let q = query(
     collection(db, collectionName),
@@ -154,26 +221,21 @@ const fetchInitialTabData = async (tab: 'posts' | 'comments') => {
     orderBy("createdAt", "desc"),
     limit(10)
   );
-
   if (tab === 'posts' && !isOwner.value) {
     q = query(collection(db, collectionName), where("authorId", "==", props.userId), where("isAnonymous", "==", false), orderBy("createdAt", "desc"), limit(10));
   }
-  
   const querySnapshot = await getDocs(q);
   lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
-
   if (tab === 'posts') {
     userPosts.value = querySnapshot.docs.map(doc => ({ 
-        ...doc.data(), id: doc.id, authorAvatarUrl: userProfile.value.avatarUrl 
+        ...doc.data(), id: doc.id, authorAvatarUrl: userProfile.value?.avatarUrl 
     } as Post));
   } else {
     userComments.value = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
   }
-  
   if (querySnapshot.empty || querySnapshot.docs.length < 10) {
     hasMore.value = false;
   }
-
   isTabLoading.value = false;
   await nextTick();
   setupObserver();
@@ -181,7 +243,6 @@ const fetchInitialTabData = async (tab: 'posts' | 'comments') => {
 
 const loadMore = async () => {
   if (isMoreLoading.value || !hasMore.value || !lastVisibleDoc.value) return;
-  
   isMoreLoading.value = true;
   const collectionName = activeTab.value as 'posts' | 'comments';
   let q = query(
@@ -191,16 +252,14 @@ const loadMore = async () => {
     startAfter(lastVisibleDoc.value),
     limit(10)
   );
-
   if (collectionName === 'posts' && !isOwner.value) {
     q = query(collection(db, collectionName), where("authorId", "==", props.userId), where("isAnonymous", "==", false), orderBy("createdAt", "desc"), startAfter(lastVisibleDoc.value), limit(10));
   }
-
   const querySnapshot = await getDocs(q);
   if (!querySnapshot.empty) {
     lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
     if (activeTab.value === 'posts') {
-      const newPosts = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, authorAvatarUrl: userProfile.value.avatarUrl } as Post));
+      const newPosts = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, authorAvatarUrl: userProfile.value?.avatarUrl } as Post));
       userPosts.value.push(...newPosts);
     } else {
       const newComments = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -225,10 +284,16 @@ const setupObserver = () => {
   }
 };
 
-onMounted(() => fetchUserProfile(props.userId));
+onMounted(() => {
+    fetchUserProfile(props.userId);
+    auth.onAuthStateChanged(user => {
+        setupLoggedInUserListener(user ? user.uid : null);
+    });
+});
 onUnmounted(() => { 
   if (observer) observer.disconnect();
   if (profileUnsubscribe) profileUnsubscribe();
+  if (loggedInUserUnsubscribe) loggedInUserUnsubscribe();
 });
 watch(() => props.userId, (newId) => { 
   activeTab.value = 'about'; 
@@ -251,8 +316,14 @@ watch(activeTab, (newTab) => {
       :is-owner="isOwner" 
       :is-uploading="isUploading"
       v-model:active-tab="activeTab" 
+      :is-following="isFollowing"
+      :is-follow-loading="isFollowLoading"
+      :followers-count="followersCount"
+      :following-count="followingCount"
       @trigger-file-upload="triggerFileUpload"
       @open-settings-menu="isSettingsMenuOpen = true"
+      @toggle-follow="toggleFollow"
+      @show-follow-list="showFollowList"
     />
     
     <main class="profile-content">
@@ -307,6 +378,14 @@ watch(activeTab, (newTab) => {
   <UploadSuccessModal v-if="showSuccessModal" @close="closeSuccessModal" />
   
   <SettingsMenu v-if="isSettingsMenuOpen" @close="isSettingsMenuOpen = false" />
+  
+  <FollowListModal 
+    v-if="isFollowModalOpen" 
+    :title="followModalTitle"
+    :users="usersToShow"
+    :loading="isFollowModalLoading"
+    @close="isFollowModalOpen = false"
+  />
 </template>
 
 <style scoped>

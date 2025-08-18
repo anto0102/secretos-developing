@@ -62,9 +62,19 @@ const deleteNotification = async (id: string) => {
     }
 };
 
-const goToPost = async (notification: any) => {
-    if (notification.postId) {
+const handleNotificationClick = async (notification: any) => {
+    // Segna la notifica come letta prima di navigare
+    if (!notification.isRead) {
         await updateDoc(doc(db, 'notifications', notification.id), { isRead: true });
+        notification.isRead = true; // Aggiorna lo stato locale
+    }
+
+    // --- LOGICA DI NAVIGAZIONE CORRETTA ---
+    if (notification.type === 'follow') {
+        // Se è una notifica di follow, postId contiene l'UID dell'utente che ha iniziato a seguire
+        router.push({ name: 'Profile', params: { userId: notification.postId } });
+    } else if (notification.postId) {
+        // Per tutte le altre notifiche, vai al post
         router.push({
             name: 'PostView',
             params: { postId: notification.postId },
@@ -79,6 +89,7 @@ onMounted(() => {
         if (user) {
             fetchNotifications(user.uid);
         } else {
+            isLoading.value = false;
             notifications.value = [];
         }
     });
@@ -89,7 +100,7 @@ onMounted(() => {
     <div class="notifications-page">
         <div class="page-header">
             <h1 class="page-title">Notifiche</h1>
-            <button @click="markAllAsRead" class="read-all-btn">
+            <button v-if="hasUnreadNotifications" @click="markAllAsRead" class="read-all-btn">
                 <CheckCheck :size="18"/>
                 <span>Segna tutte come lette</span>
             </button>
@@ -108,7 +119,7 @@ onMounted(() => {
                 :key="notification.id" 
                 class="notification-card"
                 :class="{ 'unread': !notification.isRead }"
-                @click="goToPost(notification)"
+                @click="handleNotificationClick(notification)"
             >
                 <div class="notification-icon-wrapper">
                     <BellRing v-if="!notification.isRead" :size="20" class="notif-icon-ring" />

@@ -79,4 +79,7 @@ export interface UserProfile {
     // --- NUOVI CAMPI PER I BADGE ---
     badges?: string[]; // Array di ID dei badge ottenuti (es. ['pioneer', 'popular'])
     primaryBadge?: string; // L'ID del badge scelto come primario (es. 'popular')
+    // Campi per il following 
+     following?: string[]; // Array di UID degli utenti che segue
+    followers?: string[]; // Array di UID degli utenti che lo seguono
 }
