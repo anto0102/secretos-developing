@@ -4,11 +4,11 @@ import PostCard from '../components/PostCard.vue';
 import FilterTabs from '../components/FilterTabs.vue';
 import FilterModal from '../components/FilterModal.vue';
 import { db, auth } from '../firebase/config';
-import { collection, query, onSnapshot, orderBy, doc, getDoc, limit, startAfter, getDocs, DocumentSnapshot, where } from 'firebase/firestore';
+import { collection, query, orderBy, doc, getDoc, limit, startAfter, getDocs, DocumentSnapshot, where } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { type Post, type UserProfile } from '../types';
 import { Loader, Sparkles, Flame, Shuffle, Users } from 'lucide-vue-next';
-import NProgress from '../utils/loadingIndicator'; // <-- 1. IMPORTA NPROGRESS
+import NProgress from '../utils/loadingIndicator';
 
 interface PostWithAuthor extends Post {
   authorProfile?: UserProfile;
@@ -21,8 +21,7 @@ const lastVisibleDoc = ref<DocumentSnapshot | null>(null);
 const isMoreLoading = ref(false);
 const hasMore = ref(true);
 const sentinelRef = ref<HTMLElement | null>(null);
-let observer: IntersectionObserver;
-let unsubscribe: (() => void) | null = null;
+let observer: IntersectionObserver | null = null;
 const isLoggedIn = ref(false);
 
 const isMobile = ref(window.innerWidth < 768);
@@ -47,20 +46,14 @@ const hiddenTabs = computed(() => isMobile.value ? allFilterTabs.value.slice(3) 
 
 const setFilter = (filterKey: 'new' | 'viral' | 'random' | 'following') => {
     isFilterModalOpen.value = false;
-    if (filterKey === 'random') {
-        NProgress.start(); // <-- 2. AVVIA LA BARRA PER IL FILTRO RANDOM
-        activeFilter.value = 'random';
-        fetchAndShufflePosts();
-        return;
-    }
-    if (activeFilter.value !== filterKey) {
-        activeFilter.value = filterKey;
-    }
+    if (activeFilter.value === filterKey) return;
+    activeFilter.value = filterKey;
 };
 
 const enrichPostsWithAuthors = async (postsData: Post[]): Promise<PostWithAuthor[]> => {
     const authorIds = [...new Set(postsData.map(post => post.authorId).filter(Boolean))];
-    if (authorIds.length === 0) return postsData;
+    if (authorIds.length === 0) return postsData as PostWithAuthor[];
+
     const userDocs = await Promise.all(authorIds.map(id => getDoc(doc(db, "users", id))));
     const authorProfileMap = new Map<string, UserProfile>();
     userDocs.forEach(userDoc => {
@@ -83,155 +76,149 @@ const shuffleArray = (array: any[]) => {
   return array;
 };
 
-const fetchInitialPosts = (filter = activeFilter.value) => {
-  isLoading.value = true;
-  hasMore.value = true;
-  lastVisibleDoc.value = null;
-  posts.value = [];
-  if (observer) observer.disconnect();
-  if (unsubscribe) unsubscribe();
-
-  const orderByField = filter === 'viral' ? 'score' : 'createdAt';
-  const q = query(collection(db, "posts"), orderBy(orderByField, "desc"), limit(10));
-
-  unsubscribe = onSnapshot(q, async (querySnapshot) => {
-    const postsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Post));
-    lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
-    posts.value = await enrichPostsWithAuthors(postsData);
-    isLoading.value = false;
-    NProgress.done(); // <-- 3. FERMA LA BARRA QUANDO I DATI SONO CARICATI
-    if (querySnapshot.docs.length < 10) hasMore.value = false;
-    await nextTick();
-    setupObserver();
-  }, (error) => {
-      console.error("Errore nel fetch dei post:", error);
-      isLoading.value = false;
-      NProgress.done(); // <-- 3. FERMA LA BARRA ANCHE IN CASO DI ERRORE
-  });
+const setupObserver = () => {
+    if (observer) observer.disconnect();
+    if (sentinelRef.value) {
+        observer = new IntersectionObserver(([entry]) => {
+            if (entry.isIntersecting && hasMore.value && !isMoreLoading.value) {
+                loadMorePosts();
+            }
+        }, { threshold: 0.5 });
+        observer.observe(sentinelRef.value);
+    }
 };
 
-const fetchFollowingPosts = async () => {
+const fetchPosts = async (filter: 'new' | 'viral' | 'random' | 'following') => {
     isLoading.value = true;
+    NProgress.start();
     posts.value = [];
     hasMore.value = true;
     lastVisibleDoc.value = null;
     if (observer) observer.disconnect();
-    if (unsubscribe) unsubscribe();
 
-    const user = auth.currentUser;
-    if (!user) {
-        isLoading.value = false;
-        hasMore.value = false;
-        posts.value = [];
-        NProgress.done(); // <-- 3. FERMA LA BARRA
-        return;
-    }
-
-    const userDocRef = doc(db, "users", user.uid);
-    const userDocSnap = await getDoc(userDocRef);
-    const followingList = userDocSnap.exists() ? userDocSnap.data()?.following || [] : [];
-
-    if (followingList.length === 0) {
-        isLoading.value = false;
-        hasMore.value = false;
-        posts.value = [];
-        NProgress.done(); // <-- 3. FERMA LA BARRA
-        return;
-    }
-
-    // Il resto della funzione rimane invariato
-    const followingChunks = [];
-    for (let i = 0; i < followingList.length; i += 30) {
-        followingChunks.push(followingList.slice(i, i + 30));
-    }
+    let q;
+    const baseCollection = collection(db, "posts");
 
     try {
-        const queries = followingChunks.map(chunk => 
-            query(collection(db, "posts"), where("authorId", "in", chunk), orderBy("createdAt", "desc"), limit(10))
-        );
-        const querySnapshots = await Promise.all(queries.map(q => getDocs(q)));
-        let combinedPosts: Post[] = [];
-        querySnapshots.forEach(snap => {
-            combinedPosts.push(...snap.docs.map(d => ({ id: d.id, ...d.data() } as Post)));
-        });
-        combinedPosts.sort((a, b) => b.createdAt!.toMillis() - a.createdAt!.toMillis());
-        const initialPostsData = combinedPosts.slice(0, 10);
-        const lastPostId = initialPostsData.length > 0 ? initialPostsData[initialPostsData.length - 1].id : null;
-        if (lastPostId) {
-            lastVisibleDoc.value = await getDoc(doc(db, "posts", lastPostId));
+        if (filter === 'random') {
+            hasMore.value = false;
+            const randomQuery = query(baseCollection, orderBy("createdAt", "desc"), limit(50));
+            const querySnapshot = await getDocs(randomQuery);
+            const postsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Post));
+            posts.value = shuffleArray(await enrichPostsWithAuthors(postsData));
+        } else if (filter === 'following') {
+            const user = auth.currentUser;
+            if (!user) {
+                posts.value = []; hasMore.value = false;
+                isLoading.value = false; NProgress.done(); return;
+            }
+            const userDocSnap = await getDoc(doc(db, "users", user.uid));
+            const followingList = userDocSnap.exists() ? userDocSnap.data()?.following || [] : [];
+            
+            if (followingList.length === 0) {
+                posts.value = []; hasMore.value = false;
+                isLoading.value = false; NProgress.done(); return;
+            }
+            // NOTA: Firestore limita la clausola 'in' a 30 elementi.
+            // Questa implementazione disabilita lo scroll infinito se si seguono più di 30 persone.
+            if (followingList.length > 30) hasMore.value = false;
+
+            q = query(baseCollection, where("authorId", "in", followingList.slice(0, 30)), orderBy("createdAt", "desc"), limit(10));
+        } else {
+            const orderByField = filter === 'viral' ? 'score' : 'createdAt';
+            q = query(baseCollection, orderBy(orderByField, "desc"), limit(10));
         }
-        posts.value = await enrichPostsWithAuthors(initialPostsData);
-        if (initialPostsData.length < 10) hasMore.value = false;
-        await nextTick();
-        setupObserver();
-    } catch(error) {
-        console.error("Errore nel fetch dei post seguiti:", error);
+        
+        if (q) {
+            const querySnapshot = await getDocs(q);
+            const postsData = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Post));
+            lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
+            posts.value = await enrichPostsWithAuthors(postsData);
+            if (querySnapshot.docs.length < 10) {
+                hasMore.value = false;
+            }
+        }
+    } catch (error) {
+        console.error("Errore nel fetch dei post:", error);
+        hasMore.value = false;
     } finally {
         isLoading.value = false;
-        NProgress.done(); // <-- 3. FERMA LA BARRA
+        NProgress.done();
     }
-};
-
-const fetchAndShufflePosts = async () => {
-  isLoading.value = true;
-  hasMore.value = false;
-  posts.value = [];
-  if (observer) observer.disconnect();
-  if (unsubscribe) unsubscribe();
-
-  const q = query(collection(db, "posts"), orderBy("createdAt", "desc"), limit(30));
-  const querySnapshot = await getDocs(q);
-  const postsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Post));
-  posts.value = shuffleArray(await enrichPostsWithAuthors(postsData));
-  isLoading.value = false;
-  NProgress.done(); // <-- 3. FERMA LA BARRA
 };
 
 const loadMorePosts = async () => {
-    // ... logica invariata ...
+    if (isMoreLoading.value || !hasMore.value || !lastVisibleDoc.value || activeFilter.value === 'random') return;
+    isMoreLoading.value = true;
+
+    let q;
+    const baseCollection = collection(db, "posts");
+    
+    try {
+        if (activeFilter.value === 'following') {
+            const user = auth.currentUser;
+            if (!user) return;
+            const userDocSnap = await getDoc(doc(db, "users", user.uid));
+            const followingList = userDocSnap.exists() ? userDocSnap.data()?.following || [] : [];
+            if (followingList.length === 0 || followingList.length > 30) {
+                hasMore.value = false; return;
+            }
+            q = query(baseCollection, where("authorId", "in", followingList), orderBy("createdAt", "desc"), startAfter(lastVisibleDoc.value), limit(10));
+        } else {
+            const orderByField = activeFilter.value === 'viral' ? 'score' : 'createdAt';
+            q = query(baseCollection, orderBy(orderByField, "desc"), startAfter(lastVisibleDoc.value), limit(10));
+        }
+
+        const querySnapshot = await getDocs(q);
+        if (!querySnapshot.empty) {
+            lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
+            const newPostsData = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Post));
+            const enrichedNewPosts = await enrichPostsWithAuthors(newPostsData);
+            posts.value.push(...enrichedNewPosts);
+            if (querySnapshot.docs.length < 10) hasMore.value = false;
+        } else {
+            hasMore.value = false;
+        }
+    } catch (error) {
+        console.error("Errore nel caricare altri post:", error);
+    } finally {
+        isMoreLoading.value = false;
+    }
 };
-const setupObserver = () => {
-    // ... logica invariata ...
-};
 
-watch(activeFilter, (newFilter, oldFilter) => {
-  if (newFilter === oldFilter && newFilter !== 'random') return; 
-
-  NProgress.start(); // <-- 2. AVVIA LA BARRA QUANDO CAMBIA IL FILTRO
-
-  if (newFilter === 'following') {
-    fetchFollowingPosts();
-  } else if (newFilter !== 'random') {
-    fetchInitialPosts(newFilter);
-  } else {
-    // Il caso 'random' viene gestito in setFilter, ma per sicurezza fermiamo la barra se non fa nulla
-    NProgress.done();
-  }
+watch(activeFilter, (newFilter) => {
+    fetchPosts(newFilter);
 });
+
+// NUOVO WATCHER: si occupa di attivare l'observer solo quando il caricamento è finito
+// e ci sono dei post da mostrare. Questo risolve il problema di timing.
+watch(isLoading, (newIsLoading) => {
+    if (!newIsLoading && posts.value.length > 0) {
+        nextTick(() => {
+            setupObserver();
+        });
+    }
+});
+
 
 onMounted(() => {
   window.addEventListener('resize', checkMobile);
   onAuthStateChanged(auth, (user) => {
+    const wasLoggedIn = isLoggedIn.value;
     isLoggedIn.value = !!user;
-    if (!user && activeFilter.value === 'following') {
+    if (wasLoggedIn !== isLoggedIn.value) {
+      if (!isLoggedIn.value && activeFilter.value === 'following') {
         activeFilter.value = 'new';
-    } else {
-        if (activeFilter.value === 'following') fetchFollowingPosts();
+      } else {
+        fetchPosts(activeFilter.value);
+      }
     }
   });
-
-  if (activeFilter.value === 'random') {
-    fetchAndShufflePosts();
-  } else if (activeFilter.value === 'following') {
-    fetchFollowingPosts();
-  } else {
-    fetchInitialPosts();
-  }
+  fetchPosts(activeFilter.value);
 });
 
 onUnmounted(() => { 
   window.removeEventListener('resize', checkMobile);
-  if (unsubscribe) unsubscribe();
   if (observer) observer.disconnect();
 });
 </script>
