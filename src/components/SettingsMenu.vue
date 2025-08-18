@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { defineEmits } from 'vue';
 import { useRouter } from 'vue-router';
-import { X, Settings, Lock, Mail, User2, Trash2 } from 'lucide-vue-next';
+import { X, Settings, Lock, Mail, Trash2 } from 'lucide-vue-next';
 
 const emit = defineEmits(['close']);
 const router = useRouter();
@@ -24,21 +24,17 @@ const navigateTo = (routeName: string) => {
         <nav class="settings-nav">
           <button class="nav-item" @click="navigateTo('Settings')">
             <Settings :size="20" />
-            <span>Preferenze</span>
+            <span>Username e Preferenze</span>
           </button>
-          <button class="nav-item">
+          <button class="nav-item" @click="navigateTo('ChangePassword')">
             <Lock :size="20" />
             <span>Password</span>
           </button>
-          <button class="nav-item">
+          <button class="nav-item" @click="navigateTo('ChangeEmail')">
             <Mail :size="20" />
             <span>Email</span>
           </button>
-          <button class="nav-item">
-            <User2 :size="20" />
-            <span>Età e sesso</span>
-          </button>
-          <button class="nav-item delete-item">
+          <button class="nav-item delete-item" @click="navigateTo('DeleteAccount')">
             <Trash2 :size="20" />
             <span>Elimina account</span>
           </button>
@@ -49,26 +45,6 @@ const navigateTo = (routeName: string) => {
 </template>
 
 <style scoped>
-/* Stili per le animazioni */
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.3s ease;
-}
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-.modal-enter-active .settings-menu-container,
-.modal-leave-active .settings-menu-container {
-  transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
-}
-.modal-enter-from .settings-menu-container,
-.modal-leave-to .settings-menu-container {
-  transform: translateY(100%);
-}
-
-
-/* Stili esistenti (invariati) */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -80,44 +56,38 @@ const navigateTo = (routeName: string) => {
   justify-content: center;
   align-items: flex-end;
   z-index: 1000;
-  backdrop-filter: blur(5px);
 }
 .settings-menu-container {
+  background-color: #1e1e1e;
   width: 100%;
   max-width: 500px;
-  background-color: #1a1a1a;
-  border-radius: 20px 20px 0 0;
-  padding: 1.5rem;
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  padding: 1rem 1.5rem 2rem;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
   position: relative;
 }
 .drag-handle {
-  width: 50px;
-  height: 6px;
-  background-color: #333;
-  border-radius: 3px;
-  margin: 0 auto 1.5rem;
+  width: 40px;
+  height: 5px;
+  background-color: #444;
+  border-radius: 2.5px;
+  margin: 0 auto 1rem;
 }
 .close-btn {
   position: absolute;
   top: 1rem;
-  right: 1rem;
+  right: 1.5rem;
   background: none;
   border: none;
   color: #a0a0a0;
   cursor: pointer;
-  padding: 0.5rem;
-}
-.close-btn:hover {
-  color: #fff;
-  background-color: #2a2a2a;
-  border-radius: 50%;
 }
 .menu-title {
   text-align: center;
-  font-size: 1.5rem;
-  font-weight: bold;
-  margin-bottom: 2rem;
+  font-size: 1.25rem;
+  margin-bottom: 1.5rem;
+  color: #f0f0f0;
 }
 .settings-nav {
   display: flex;
@@ -128,43 +98,30 @@ const navigateTo = (routeName: string) => {
   display: flex;
   align-items: center;
   gap: 1rem;
+  padding: 1rem;
+  border-radius: 8px;
   background: none;
   border: none;
   color: #e0e0e0;
-  padding: 1rem;
-  border-radius: 12px;
   text-align: left;
+  font-size: 1rem;
   cursor: pointer;
-  font-size: 1.1rem;
-  font-weight: bold;
-  transition: background-color 0.2s ease;
+  transition: background-color 0.2s;
 }
 .nav-item:hover {
   background-color: #2a2a2a;
 }
-.nav-item span {
-  flex-grow: 1;
-}
-.delete-item {
+.nav-item.delete-item {
   color: #ef4444;
 }
-
-@media (min-width: 768px) {
-  .modal-overlay {
-    align-items: center;
-  }
-  .settings-menu-container {
-    border-radius: 12px;
-    transform: translateY(0) !important; /* Resetta la trasformazione per desktop */
-  }
-  .modal-enter-active .settings-menu-container,
-  .modal-leave-active .settings-menu-container {
-    transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.27, 1.55), opacity 0.3s ease;
-  }
-  .modal-enter-from .settings-menu-container,
-  .modal-leave-to .settings-menu-container {
-    transform: scale(0.95) !important;
-    opacity: 0;
-  }
+.modal-enter-active, .modal-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.modal-enter-from, .modal-leave-to {
+  opacity: 0;
+}
+.modal-enter-from .settings-menu-container,
+.modal-leave-to .settings-menu-container {
+  transform: translateY(100%);
 }
 </style>

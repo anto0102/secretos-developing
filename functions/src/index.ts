@@ -1,6 +1,7 @@
 import {onDocumentCreated, onDocumentUpdated} from "firebase-functions/v2/firestore";
 import {onSchedule} from "firebase-functions/v2/scheduler";
-import {onCall, HttpsError} from "firebase-functions/v2/https"; // <-- Importa HttpsError
+import {onCall, HttpsError} from "firebase-functions/v2/https";
+import {onUserDeleted} from "firebase-functions/v2/auth";
 import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 
@@ -91,11 +92,8 @@ export const onPostUpdate = onDocumentUpdated("posts/{postId}", async (event) =>
   }
 });
 
-// --- NUOVA FUNZIONE PER IL FOLLOW ---
+// --- FUNZIONE PER IL FOLLOW ---
 
-/**
- * Funzione chiamabile per seguire o smettere di seguire un utente.
- */
 export const toggleFollow = onCall(async (request) => {
   const currentUserId = request.auth?.uid;
   const targetUserId = request.data.userId;
@@ -123,21 +121,18 @@ export const toggleFollow = onCall(async (request) => {
   const batch = db.batch();
 
   if (isFollowing) {
-    // Unfollow
     batch.update(currentUserRef, {following: admin.firestore.FieldValue.arrayRemove(targetUserId)});
     batch.update(targetUserRef, {followers: admin.firestore.FieldValue.arrayRemove(currentUserId)});
   } else {
-    // Follow
     batch.update(currentUserRef, {following: admin.firestore.FieldValue.arrayUnion(targetUserId)});
     batch.update(targetUserRef, {followers: admin.firestore.FieldValue.arrayUnion(currentUserId)});
 
-    // Crea notifica
     const notificationText = `${currentUserData.username} ha iniziato a seguirti.`;
     const notificationRef = db.collection("notifications").doc();
     batch.set(notificationRef, {
       recipientId: targetUserId,
       type: "follow",
-      postId: currentUserId, // Usiamo l'ID di chi segue come riferimento
+      postId: currentUserId,
       text: notificationText,
       isRead: false,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
@@ -151,7 +146,7 @@ export const toggleFollow = onCall(async (request) => {
 
 // --- FUNZIONE PER LA RETROCOMPATIBILITÀ DEI BADGE ---
 
-export const checkBadgesRetroactively = onCall(async (request) => {
+export const checkBadgesRetroactively = onCall(async (_request) => {
   logger.log("Inizio controllo retroattivo dei badge per tutti gli utenti.");
 
   const usersSnapshot = await db.collection("users").get();
@@ -195,28 +190,33 @@ export const checkBadgesRetroactively = onCall(async (request) => {
   return {status: "success", message: message};
 });
 
+// --- FUNZIONE PER LA FINE DEI SONDAGGI (CORRETTA E REINSERITA) ---
 export const onPollEnd = onSchedule("every 5 minutes", async () => {
-  const now = new Date();
+  const now = admin.firestore.Timestamp.now();
   const pollsQuery = db.collection("posts")
     .where("isPoll", "==", true)
-    .where("pollNotified", "==", false)
-    .where("pollEndDate", "<=", now);
+    .where("pollEndDate", "<=", now)
+    .where("pollEndNotified", "==", false);
 
   const expiredPollsSnapshot = await pollsQuery.get();
   if (expiredPollsSnapshot.empty) {
-    logger.log("Nessun sondaggio scaduto trovato.");
+    logger.log("Nessun sondaggio scaduto da notificare.");
     return;
   }
 
-  const promises = expiredPollsSnapshot.docs.map(async (doc) => {
+  const batch = db.batch();
+
+  for (const doc of expiredPollsSnapshot.docs) {
     const post = doc.data();
     const postId = doc.id;
     const allVoterIds = post.pollOptions.flatMap((opt: { votedBy: string[] }) => opt.votedBy || []);
     const uniqueVoterIds = [...new Set(allVoterIds)];
 
-    const notificationPromises = uniqueVoterIds.map((userId) => {
-      const text = `Il sondaggio "${post.text.substring(0, 30)}..." è terminato.`;
-      return db.collection("notifications").add({
+    const text = `Il sondaggio "${post.text.substring(0, 30)}..." è terminato. Vedi i risultati!`;
+
+    uniqueVoterIds.forEach((userId) => {
+      const notificationRef = db.collection("notifications").doc();
+      batch.set(notificationRef, {
         recipientId: userId,
         type: "poll_end",
         postId,
@@ -226,10 +226,42 @@ export const onPollEnd = onSchedule("every 5 minutes", async () => {
       });
     });
 
-    await Promise.all(notificationPromises);
-    return doc.ref.update({pollNotified: true});
+    batch.update(doc.ref, {pollEndNotified: true});
+  }
+
+  await batch.commit();
+  logger.log(`Notifiche inviate per ${expiredPollsSnapshot.size} sondaggi scaduti.`);
+});
+
+
+// --- FUNZIONE PER L'ELIMINAZIONE DELL'ACCOUNT (SINTASSI V2 CORRETTA) ---
+export const onUserDelete = onUserDeleted(async (event) => {
+  const user = event.data;
+  const userId = user.uid;
+  const batch = db.batch();
+
+  // 1. Elimina il documento dell'utente da Firestore
+  const userRef = db.collection("users").doc(userId);
+  batch.delete(userRef);
+
+  // 2. Elimina i post dell'utente
+  const postsQuery = db.collection("posts").where("authorId", "==", userId);
+  const postsSnapshot = await postsQuery.get();
+  postsSnapshot.forEach((doc) => {
+    batch.delete(doc.ref);
   });
 
-  await Promise.all(promises);
-  logger.log(`Processati ${expiredPollsSnapshot.size} sondaggi scaduti.`);
+  // 3. Elimina i commenti dell'utente
+  const commentsQuery = db.collection("comments").where("authorId", "==", userId);
+  const commentsSnapshot = await commentsQuery.get();
+  commentsSnapshot.forEach((doc) => {
+    batch.delete(doc.ref);
+  });
+
+  try {
+    await batch.commit();
+    logger.log(`Dati per l'utente ${userId} eliminati con successo.`);
+  } catch (error) {
+    logger.error(`Errore durante l'eliminazione dei dati per l'utente ${userId}:`, error);
+  }
 });

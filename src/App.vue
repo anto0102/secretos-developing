@@ -76,8 +76,11 @@ body {
 }
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
 
+/* --- INIZIO MODIFICHE --- */
 .app-layout {
   display: flex;
+  height: 100vh;
+  overflow: hidden; /* Impedisce lo scroll del body */
 }
 
 .main-content {
@@ -85,28 +88,28 @@ body {
   width: 100%;
   box-sizing: border-box;
   overflow-x: hidden;
-  /* --- MODIFICA QUI: Rimosso il padding-bottom --- */
+  
+  /* Proprietà per rendere questo il contenitore scrollabile principale */
+  overflow-y: auto;
+  height: 100vh;
+  
+  /* Padding per la navbar inferiore solo su mobile */
+  padding-bottom: 60px;
 }
+/* --- FINE MODIFICHE --- */
 
 /* Di default (mobile), la sidebar è nascosta e la bottom nav è visibile */
 .sidebar-container { display: none; }
 .bottom-nav-container { display: block; }
 
 @media (min-width: 768px) {
-  .app-layout {
-    height: 100vh;
-    overflow: hidden;
-  }
-
   .sidebar-container { 
     display: block; 
     flex-shrink: 0;
   }
 
   .main-content {
-    flex-grow: 1;
-    overflow-y: auto;
-    height: 100vh;
+    /* Rimuove il padding su desktop */
     padding-bottom: 0;
   }
 

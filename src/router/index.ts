@@ -1,10 +1,16 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { auth } from '../firebase/config';
-import NProgress from '../utils/loadingIndicator'; // <-- IMPORTATO
+import NProgress from '../utils/loadingIndicator';
 import HomeView from '../views/HomeView.vue';
 import SettingsView from '../views/SettingsView.vue';
 import PostView from '../views/PostView.vue';
 import PostCommentsView from '../views/PostCommentsView.vue';
+
+// Import delle nuove viste per le impostazioni
+import ChangePasswordView from '../views/ChangePasswordView.vue';
+import ChangeEmailView from '../views/ChangeEmailView.vue';
+import DeleteAccountView from '../views/DeleteAccountView.vue';
+
 
 const routes = [
   { path: '/', name: 'Home', component: HomeView },
@@ -31,6 +37,22 @@ const routes = [
     path: '/settings',
     name: 'Settings',
     component: SettingsView
+  },
+  // Aggiunta delle nuove rotte per le impostazioni
+  {
+    path: '/settings/password',
+    name: 'ChangePassword',
+    component: ChangePasswordView,
+  },
+  {
+    path: '/settings/email',
+    name: 'ChangeEmail',
+    component: ChangeEmailView,
+  },
+  {
+    path: '/settings/delete-account',
+    name: 'DeleteAccount',
+    component: DeleteAccountView,
   },
   {
     path: '/post/:postId',
