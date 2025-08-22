@@ -1,27 +1,47 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watchEffect } from 'vue';
 import { useRouter } from 'vue-router';
 import { MoreHorizontal, Trash2, Pencil, UserCircle, Venus, Mars } from 'lucide-vue-next';
 import { auth, db } from '../firebase/config';
 import { getDoc, doc } from 'firebase/firestore';
 import { type Post } from '../types';
-import BadgeIcon from './BadgeIcon.vue'; // <-- IMPORTATO
+import BadgeIcon from './BadgeIcon.vue';
+import ChannelBadge from './ChannelBadge.vue';
+import ActionSheetModal from './ActionSheetModal.vue';
 
 const props = defineProps<{
   authorId: string | undefined;
   author: string | undefined;
   authorAvatarUrl: string | undefined;
-  authorPrimaryBadge?: string; // <-- NUOVA PROP
+  authorPrimaryOfficialBadge?: string;
+  authorPrimaryCustomBadgeId?: string;
   isAnonymous: boolean | undefined;
   postId: string;
+  channel?: string;
 }>();
 
 const emit = defineEmits(['delete-post', 'edit-post']);
 
 const router = useRouter();
-const isMenuOpen = ref(false);
+const isActionSheetOpen = ref(false);
 const isOwner = computed(() => auth.currentUser?.uid === props.authorId);
 const anonymousPostGender = ref('nonbinary');
+const customPrimaryBadgeData = ref<any>(null);
+
+watchEffect(async () => {
+    if (props.authorId && props.authorPrimaryCustomBadgeId) {
+        try {
+            const badgeRef = doc(db, 'users', props.authorId, 'customBadges', props.authorPrimaryCustomBadgeId);
+            const badgeSnap = await getDoc(badgeRef);
+            customPrimaryBadgeData.value = badgeSnap.exists() ? badgeSnap.data() : null;
+        } catch (e) {
+            console.error("Error fetching custom badge for post header", e);
+            customPrimaryBadgeData.value = null;
+        }
+    } else {
+        customPrimaryBadgeData.value = null;
+    }
+});
 
 const fetchAnonymousGender = async () => {
   if (props.isAnonymous) {
@@ -44,9 +64,19 @@ const anonymousIcon = computed(() => {
 
 fetchAnonymousGender();
 
-const toggleMenu = () => {
-  isMenuOpen.value = !isMenuOpen.value;
-};
+const postActions = computed(() => [
+  {
+    label: 'Modifica',
+    icon: Pencil,
+    action: () => emit('edit-post', props.postId),
+  },
+  {
+    label: 'Elimina',
+    icon: Trash2,
+    isDestructive: true,
+    action: () => emit('delete-post'),
+  },
+]);
 
 const goToProfile = () => {
   if (!props.isAnonymous) {
@@ -61,27 +91,29 @@ const goToProfile = () => {
       <img v-if="authorAvatarUrl" :src="authorAvatarUrl" class="author-avatar" alt="Avatar">
       <div v-else class="author-avatar-placeholder"></div>
       <span class="author">{{ author }}</span>
-      <BadgeIcon v-if="authorPrimaryBadge" :badge-id="authorPrimaryBadge" :size="18" />
+      <BadgeIcon v-if="authorPrimaryOfficialBadge" :badge-id="authorPrimaryOfficialBadge" :size="18" />
+      <div v-if="customPrimaryBadgeData" class="custom-badge-wrapper" :title="customPrimaryBadgeData.name">
+          <img :src="customPrimaryBadgeData.imageUrl" class="custom-badge-icon" :alt="customPrimaryBadgeData.name" />
+      </div>
     </router-link>
     <div v-else class="author-link is-anonymous-link">
       <component :is="anonymousIcon" :size="24" class="author-avatar is-anonymous-avatar-icon" />
       <span class="author">{{ author }}</span>
     </div>
 
+    <ChannelBadge v-if="channel" :channel-id="channel" />
+
     <div v-if="isOwner" class="menu-container">
-      <MoreHorizontal :size="20" class="icon" @click.stop="toggleMenu" />
-      <transition name="fade">
-        <div v-if="isMenuOpen" class="dropdown-menu" @mouseleave="isMenuOpen = false">
-          <button @click="$emit('edit-post', postId)" class="menu-item edit-item">
-            <Pencil :size="16" /><span>Modifica</span>
-          </button>
-          <button @click="$emit('delete-post')" class="menu-item delete-item">
-            <Trash2 :size="16" /><span>Elimina</span>
-          </button>
-        </div>
-      </transition>
+      <MoreHorizontal :size="20" class="icon" @click.stop="isActionSheetOpen = true" />
     </div>
   </div>
+
+  <ActionSheetModal
+    :show="isActionSheetOpen"
+    :actions="postActions"
+    title="Opzioni Post"
+    @close="isActionSheetOpen = false"
+  />
 </template>
 
 <style scoped>
@@ -94,7 +126,7 @@ const goToProfile = () => {
 .author-link {
   display: flex;
   align-items: center;
-  gap: 0.5rem; /* Ridotto per far spazio al badge */
+  gap: 0.5rem;
   text-decoration: none;
 }
 .author-link.is-anonymous-link {
@@ -116,7 +148,7 @@ const goToProfile = () => {
 }
 .author {
   color: #a0a0a0;
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: bold;
   transition: color 0.2s;
 }
@@ -126,50 +158,21 @@ const goToProfile = () => {
 .menu-container {
   position: relative;
 }
-.dropdown-menu {
-  position: absolute;
-  top: 120%;
-  right: 0;
-  background-color: #363636;
-  border-radius: 6px;
-  padding: 0.5rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  z-index: 10;
-  width: 150px;
-}
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: none;
-  border: none;
-  padding: 0.5rem;
-  width: 100%;
-  text-align: left;
-  border-radius: 4px;
-  cursor: pointer;
-  font-weight: bold;
-  transition: background-color 0.2s;
-}
-.menu-item:hover {
-  background-color: #4b5563;
-}
-.edit-item {
-  color: #fff;
-}
-.delete-item {
-  color: #ef4444;
-}
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
 .icon {
   color: #a0a0a0;
   cursor: pointer;
+}
+.custom-badge-wrapper {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.custom-badge-icon {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
 }
 </style>

@@ -1,7 +1,7 @@
 import {onDocumentCreated, onDocumentUpdated} from "firebase-functions/v2/firestore";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
-import {onUserDeleted} from "firebase-functions/v2/auth";
+// import {onUserDeleted, UserEvent} from "firebase-functions/v2/auth"; // Commented out due to module resolution issues
 import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
 
@@ -146,7 +146,7 @@ export const toggleFollow = onCall(async (request) => {
 
 // --- FUNZIONE PER LA RETROCOMPATIBILITÀ DEI BADGE ---
 
-export const checkBadgesRetroactively = onCall(async (_request) => {
+export const checkBadgesRetroactively = onCall(async () => {
   logger.log("Inizio controllo retroattivo dei badge per tutti gli utenti.");
 
   const usersSnapshot = await db.collection("users").get();
@@ -234,8 +234,9 @@ export const onPollEnd = onSchedule("every 5 minutes", async () => {
 });
 
 
-// --- FUNZIONE PER L'ELIMINAZIONE DELL'ACCOUNT (SINTASSI V2 CORRETTA) ---
-export const onUserDelete = onUserDeleted(async (event) => {
+/*
+// --- FUNZIONE PER L'ELIMINAZIONE DELL'ACCOUNT (SINTASSI V2) ---
+export const onUserDelete = onUserDeleted(async (event: UserEvent) => {
   const user = event.data;
   const userId = user.uid;
   const batch = db.batch();
@@ -264,4 +265,224 @@ export const onUserDelete = onUserDeleted(async (event) => {
   } catch (error) {
     logger.error(`Errore durante l'eliminazione dei dati per l'utente ${userId}:`, error);
   }
+});
+*/
+
+// --- FUNZIONE PER REPOST ---
+export const repostPost = onCall(async (request) => {
+  const currentUserId = request.auth?.uid;
+  const originalPostId = request.data.originalPostId;
+
+  if (!currentUserId) {
+    throw new HttpsError("unauthenticated", "Devi essere loggato per eseguire questa operazione.");
+  }
+  if (!originalPostId) {
+    throw new HttpsError("invalid-argument", "L'ID del post originale è mancante.");
+  }
+
+  const postsRef = db.collection("posts");
+  const originalPostRef = postsRef.doc(originalPostId);
+  const currentUserRef = db.collection("users").doc(currentUserId);
+
+  const [originalPostDoc, currentUserDoc] = await Promise.all([
+    originalPostRef.get(),
+    currentUserRef.get(),
+  ]);
+
+  if (!originalPostDoc.exists) {
+    throw new HttpsError("not-found", "Il post originale non esiste più.");
+  }
+  if (!currentUserDoc.exists) {
+    throw new HttpsError("not-found", "Utente non trovato.");
+  }
+
+  const originalPostData = originalPostDoc.data();
+  const currentUserData = currentUserDoc.data();
+
+  if (!originalPostData || !currentUserData) {
+    throw new HttpsError("internal", "Impossibile recuperare i dati necessari.");
+  }
+
+  if (originalPostData.repostOf) {
+    throw new HttpsError("invalid-argument", "Non puoi repostare un repost.");
+  }
+
+  if (originalPostData.authorId === currentUserId) {
+    throw new HttpsError("invalid-argument", "Non puoi repostare un tuo stesso post.");
+  }
+
+  // Check if user has already reposted
+  if (originalPostData.repostedBy?.includes(currentUserId)) {
+    throw new HttpsError("already-exists", "Hai già repostato questo post.");
+  }
+
+  const newPostData = {
+    ...originalPostData,
+    authorId: currentUserId,
+    author: currentUserData.username,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    repostOf: originalPostId,
+    score: 0,
+    upvotedBy: [],
+    downvotedBy: [],
+    commentsCount: 0,
+    repostsCount: 0, // A repost doesn't have reposts
+    repostedBy: [], // A repost doesn't have reposters
+  };
+
+  const batch = db.batch();
+  const newPostRef = postsRef.doc();
+  batch.set(newPostRef, newPostData);
+
+  // Update the original post
+  batch.update(originalPostRef, {
+    repostsCount: admin.firestore.FieldValue.increment(1),
+    repostedBy: admin.firestore.FieldValue.arrayUnion(currentUserId),
+  });
+
+  const notificationText = `${currentUserData.username} ha repostato il tuo post.`;
+  const notificationRef = db.collection("notifications").doc();
+  batch.set(notificationRef, {
+    recipientId: originalPostData.authorId,
+    type: "repost",
+    postId: newPostRef.id,
+    text: notificationText,
+    isRead: false,
+    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  await batch.commit();
+
+  return {success: true, newPostId: newPostRef.id};
+});
+
+// --- FUNZIONI PER BADGE PERSONALIZZATI ---
+
+const MAX_CUSTOM_BADGES = 6;
+
+export const createCustomBadge = onCall(async (request) => {
+  const userId = request.auth?.uid;
+  if (!userId) {
+    throw new HttpsError("unauthenticated", "Devi essere loggato.");
+  }
+
+  const {name, description, imageUrl} = request.data;
+  if (!name || !imageUrl) {
+    throw new HttpsError("invalid-argument", "Nome e immagine sono obbligatori.");
+  }
+
+  const customBadgesRef = db.collection("users").doc(userId).collection("customBadges");
+  const snapshot = await customBadgesRef.get();
+
+  if (snapshot.size >= MAX_CUSTOM_BADGES) {
+    throw new HttpsError("resource-exhausted", `Puoi avere al massimo ${MAX_CUSTOM_BADGES} badge personalizzati.`);
+  }
+
+  const newBadge = {
+    name,
+    description: description || "",
+    imageUrl,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  const newBadgeRef = await customBadgesRef.add(newBadge);
+  return {success: true, badgeId: newBadgeRef.id};
+});
+
+export const updateCustomBadge = onCall(async (request) => {
+  const userId = request.auth?.uid;
+  if (!userId) {
+    throw new HttpsError("unauthenticated", "Devi essere loggato.");
+  }
+
+  const {badgeId, name, description} = request.data;
+  if (!badgeId || !name) {
+    throw new HttpsError("invalid-argument", "ID badge e nome sono obbligatori.");
+  }
+
+  const badgeRef = db.collection("users").doc(userId).collection("customBadges").doc(badgeId);
+
+  // Check ownership by trying to get the doc
+  const doc = await badgeRef.get();
+  if (!doc.exists) {
+    throw new HttpsError("not-found", "Badge non trovato o non hai i permessi per modificarlo.");
+  }
+
+  await badgeRef.update({
+    name,
+    description: description || "",
+  });
+
+  return {success: true};
+});
+
+export const deleteCustomBadge = onCall(async (request) => {
+  const userId = request.auth?.uid;
+  if (!userId) {
+    throw new HttpsError("unauthenticated", "Devi essere loggato.");
+  }
+
+  const {badgeId} = request.data;
+  if (!badgeId) {
+    throw new HttpsError("invalid-argument", "ID badge mancante.");
+  }
+
+  const badgeRef = db.collection("users").doc(userId).collection("customBadges").doc(badgeId);
+  const doc = await badgeRef.get();
+
+  if (!doc.exists) {
+    throw new HttpsError("not-found", "Badge non trovato.");
+  }
+
+  const imageUrl = doc.data()?.imageUrl;
+
+  await badgeRef.delete();
+
+  // If there's an image URL, try to delete it from Storage
+  if (imageUrl) {
+    try {
+      const decodedUrl = decodeURIComponent(imageUrl.split("?")[0].split("/o/")[1]);
+      const fileRef = admin.storage().bucket().file(decodedUrl);
+      await fileRef.delete();
+      logger.log(`Immagine badge ${badgeId} eliminata da Storage.`);
+    } catch (error) {
+      logger.error(`Errore durante l'eliminazione dell'immagine badge ${badgeId} da Storage:`, error);
+      // Don't throw an error to the client if only image deletion fails
+    }
+  }
+
+  // Also remove it if it was a primary badge
+  const userRef = db.collection("users").doc(userId);
+  const userDoc = await userRef.get();
+  if (userDoc.exists && userDoc.data()?.primaryCustomBadge === badgeId) {
+    await userRef.update({primaryCustomBadge: null});
+  }
+
+  return {success: true};
+});
+
+export const setPrimaryOfficialBadge = onCall(async (request) => {
+  const userId = request.auth?.uid;
+  if (!userId) {
+    throw new HttpsError("unauthenticated", "Devi essere loggato.");
+  }
+  const {badgeId} = request.data; // badgeId can be null to unset
+
+  const userRef = db.collection("users").doc(userId);
+  await userRef.update({primaryOfficialBadge: badgeId});
+
+  return {success: true};
+});
+
+export const setPrimaryCustomBadge = onCall(async (request) => {
+  const userId = request.auth?.uid;
+  if (!userId) {
+    throw new HttpsError("unauthenticated", "Devi essere loggato.");
+  }
+  const {badgeId} = request.data; // badgeId can be null to unset
+
+  const userRef = db.collection("users").doc(userId);
+  await userRef.update({primaryCustomBadge: badgeId});
+
+  return {success: true};
 });

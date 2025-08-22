@@ -32,6 +32,9 @@ export interface Post {
     resultsVisibility: 'always' | 'after_vote';
     voteVisibility: 'public' | 'anonymous';
   };
+  channel?: string;
+  repostOf?: string; // ID del post originale
+  repostsCount?: number;
 }
 
 export interface Comment {
@@ -47,6 +50,8 @@ export interface Comment {
     downvotedBy: string[];
     parentId?: string | null;
     replies?: Comment[];
+    mediaUrl?: string;
+    mediaType?: 'image' | 'gif';
 }
 
 
@@ -82,4 +87,5 @@ export interface UserProfile {
     // Campi per il following 
      following?: string[]; // Array di UID degli utenti che segue
     followers?: string[]; // Array di UID degli utenti che lo seguono
+    savedPosts?: string[]; // Array di ID dei post salvati
 }

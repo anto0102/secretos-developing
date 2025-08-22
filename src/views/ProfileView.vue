@@ -10,12 +10,13 @@ import AboutTab from '../components/AboutTab.vue';
 import PostCard from '../components/PostCard.vue';
 import FollowListModal from '../components/FollowListModal.vue';
 import { type Post, type UserProfile } from '../types';
-import { Loader, ArrowRight } from 'lucide-vue-next';
+import { Loader, ArrowRight, Grid3x3, Bookmark, Repeat } from 'lucide-vue-next';
 import { formatTimeAgo } from '../utils/dateUtils';
 import { uploadBytes, getDownloadURL, ref as storageRef } from 'firebase/storage';
 import { storage } from '../firebase/config';
 import UploadSuccessModal from '../components/UploadSuccessModal.vue';
 import SettingsMenu from '../components/SettingsMenu.vue';
+import SubNavSlider from '../components/SubNavSlider.vue';
 
 const props = defineProps<{ userId: string }>();
 const router = useRouter();
@@ -25,6 +26,17 @@ const loggedInUserProfile = ref<UserProfile | null>(null);
 const isLoading = ref(true);
 const isOwner = computed(() => auth.currentUser && auth.currentUser.uid === props.userId);
 const activeTab = ref<'about' | 'posts' | 'comments'>('about');
+const postFilter = ref('my_posts'); // my_posts, saved_posts, reposts
+
+const postTabs = computed(() => {
+  const tabs = [{ key: 'my_posts', label: 'I miei Post', icon: Grid3x3 }];
+  if (isOwner.value) {
+    tabs.push({ key: 'saved_posts', label: 'Salvati', icon: Bookmark });
+    tabs.push({ key: 'reposts', label: 'Repost', icon: Repeat });
+  }
+  return tabs;
+});
+
 const userPosts = ref<Post[]>([]);
 const userComments = ref<any[]>([]);
 const isTabLoading = ref(false);
@@ -50,6 +62,23 @@ const isFollowModalOpen = ref(false);
 const followModalTitle = ref('');
 const usersToShow = ref<UserProfile[]>([]);
 const isFollowModalLoading = ref(false);
+
+const enrichPostsWithAuthors = async (postsData: Post[]): Promise<Post[]> => {
+    const authorIds = [...new Set(postsData.map(post => post.authorId).filter(Boolean))];
+    if (authorIds.length === 0) return postsData;
+
+    const userDocs = await Promise.all(authorIds.map(id => getDoc(doc(db, "users", id))));
+    const authorProfileMap = new Map<string, UserProfile>();
+    userDocs.forEach(userDoc => {
+        if (userDoc.exists()) {
+          authorProfileMap.set(userDoc.id, userDoc.data() as UserProfile);
+        }
+    });
+    return postsData.map(post => ({
+      ...post,
+      authorProfile: authorProfileMap.get(post.authorId),
+    }));
+};
 
 const showFollowList = async (type: 'followers' | 'following') => {
     if (!userProfile.value) return;
@@ -214,60 +243,151 @@ const fetchInitialTabData = async (tab: 'posts' | 'comments') => {
   isTabLoading.value = true;
   hasMore.value = true;
   lastVisibleDoc.value = null;
-  const collectionName = tab;
-  let q = query(
-    collection(db, collectionName),
-    where("authorId", "==", props.userId),
-    orderBy("createdAt", "desc"),
-    limit(10)
-  );
-  if (tab === 'posts' && !isOwner.value) {
-    q = query(collection(db, collectionName), where("authorId", "==", props.userId), where("isAnonymous", "==", false), orderBy("createdAt", "desc"), limit(10));
-  }
-  const querySnapshot = await getDocs(q);
-  lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
+  userPosts.value = [];
+  userComments.value = [];
+
   if (tab === 'posts') {
-    userPosts.value = querySnapshot.docs.map(doc => ({ 
-        ...doc.data(), id: doc.id, authorAvatarUrl: userProfile.value?.avatarUrl 
-    } as Post));
-  } else {
+    if (postFilter.value === 'my_posts') {
+      let q = query(
+        collection(db, 'posts'),
+        where("authorId", "==", props.userId),
+        orderBy("createdAt", "desc"),
+        limit(10)
+      );
+      if (!isOwner.value) {
+        q = query(q, where("isAnonymous", "==", false));
+      }
+      const querySnapshot = await getDocs(q);
+      lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
+      userPosts.value = querySnapshot.docs.map(doc => ({ 
+          ...doc.data(), id: doc.id, authorProfile: userProfile.value 
+      } as Post));
+      if (querySnapshot.empty || querySnapshot.docs.length < 10) hasMore.value = false;
+
+    } else if (postFilter.value === 'saved_posts') {
+      const savedPostIds = loggedInUserProfile.value?.savedPosts || [];
+      if (savedPostIds.length > 0) {
+        const postIdsToFetch = savedPostIds.slice(0, 10);
+        const postsRef = collection(db, "posts");
+        const q = query(postsRef, where("__name__", "in", postIdsToFetch));
+        const querySnapshot = await getDocs(q);
+        const fetchedPosts = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Post));
+        userPosts.value = await enrichPostsWithAuthors(fetchedPosts);
+        if (savedPostIds.length <= 10) hasMore.value = false;
+      } else {
+        hasMore.value = false;
+      }
+    } else if (postFilter.value === 'reposts') {
+        const q = query(
+            collection(db, 'posts'), 
+            where("authorId", "==", props.userId),
+            where("repostOf", ">", ""), // Hacky way to check for existence
+            orderBy("repostOf"), // Firestore requires this for the inequality filter
+            orderBy("createdAt", "desc"),
+            limit(10)
+        );
+        const querySnapshot = await getDocs(q);
+        lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
+        userPosts.value = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Post));
+        if (querySnapshot.empty || querySnapshot.docs.length < 10) hasMore.value = false;
+    }
+  } else if (tab === 'comments') {
+    const q = query(
+      collection(db, 'comments'),
+      where("authorId", "==", props.userId),
+      orderBy("createdAt", "desc"),
+      limit(10)
+    );
+    const querySnapshot = await getDocs(q);
+    lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
     userComments.value = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    if (querySnapshot.empty || querySnapshot.docs.length < 10) hasMore.value = false;
   }
-  if (querySnapshot.empty || querySnapshot.docs.length < 10) {
-    hasMore.value = false;
-  }
+
   isTabLoading.value = false;
   await nextTick();
   setupObserver();
 };
 
 const loadMore = async () => {
-  if (isMoreLoading.value || !hasMore.value || !lastVisibleDoc.value) return;
+  if (isMoreLoading.value || !hasMore.value) return;
   isMoreLoading.value = true;
-  const collectionName = activeTab.value as 'posts' | 'comments';
-  let q = query(
-    collection(db, collectionName),
-    where("authorId", "==", props.userId),
-    orderBy("createdAt", "desc"),
-    startAfter(lastVisibleDoc.value),
-    limit(10)
-  );
-  if (collectionName === 'posts' && !isOwner.value) {
-    q = query(collection(db, collectionName), where("authorId", "==", props.userId), where("isAnonymous", "==", false), orderBy("createdAt", "desc"), startAfter(lastVisibleDoc.value), limit(10));
-  }
-  const querySnapshot = await getDocs(q);
-  if (!querySnapshot.empty) {
-    lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
-    if (activeTab.value === 'posts') {
-      const newPosts = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, authorAvatarUrl: userProfile.value?.avatarUrl } as Post));
-      userPosts.value.push(...newPosts);
-    } else {
+
+  if (activeTab.value === 'posts') {
+    if (postFilter.value === 'my_posts') {
+      if (!lastVisibleDoc.value) { isMoreLoading.value = false; return; }
+      let q = query(
+        collection(db, 'posts'),
+        where("authorId", "==", props.userId),
+        orderBy("createdAt", "desc"),
+        startAfter(lastVisibleDoc.value),
+        limit(10)
+      );
+      if (!isOwner.value) {
+        q = query(q, where("isAnonymous", "==", false));
+      }
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) {
+        lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
+        const newPosts = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id, authorProfile: userProfile.value } as Post));
+        userPosts.value.push(...newPosts);
+        if(querySnapshot.docs.length < 10) hasMore.value = false;
+      } else {
+        hasMore.value = false;
+      }
+    } else if (postFilter.value === 'saved_posts') {
+      const savedPostIds = loggedInUserProfile.value?.savedPosts || [];
+      const currentLoadedCount = userPosts.value.length;
+      if (savedPostIds.length > currentLoadedCount) {
+        const postIdsToFetch = savedPostIds.slice(currentLoadedCount, currentLoadedCount + 10);
+        const postsRef = collection(db, "posts");
+        const q = query(postsRef, where("__name__", "in", postIdsToFetch));
+        const querySnapshot = await getDocs(q);
+        const newPosts = await enrichPostsWithAuthors(querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Post)));
+        userPosts.value.push(...newPosts);
+        if (userPosts.value.length >= savedPostIds.length) hasMore.value = false;
+      } else {
+        hasMore.value = false;
+      }
+    } else if (postFilter.value === 'reposts') {
+        if (!lastVisibleDoc.value) { isMoreLoading.value = false; return; }
+        const q = query(
+            collection(db, 'posts'), 
+            where("authorId", "==", props.userId),
+            where("repostOf", ">", ""),
+            orderBy("repostOf"),
+            orderBy("createdAt", "desc"),
+            startAfter(lastVisibleDoc.value),
+            limit(10)
+        );
+        const querySnapshot = await getDocs(q);
+        if (!querySnapshot.empty) {
+            lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
+            const newPosts = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Post));
+            userPosts.value.push(...newPosts);
+            if(querySnapshot.docs.length < 10) hasMore.value = false;
+        } else {
+            hasMore.value = false;
+        }
+    }
+  } else if (activeTab.value === 'comments') {
+    if (!lastVisibleDoc.value) { isMoreLoading.value = false; return; }
+    const q = query(
+      collection(db, 'comments'),
+      where("authorId", "==", props.userId),
+      orderBy("createdAt", "desc"),
+      startAfter(lastVisibleDoc.value),
+      limit(10)
+    );
+    const querySnapshot = await getDocs(q);
+    if (!querySnapshot.empty) {
+      lastVisibleDoc.value = querySnapshot.docs[querySnapshot.docs.length - 1];
       const newComments = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       userComments.value.push(...newComments);
+      if(querySnapshot.docs.length < 10) hasMore.value = false;
+    } else {
+      hasMore.value = false;
     }
-    if(querySnapshot.docs.length < 10) hasMore.value = false;
-  } else {
-    hasMore.value = false;
   }
   isMoreLoading.value = false;
 };
@@ -297,13 +417,17 @@ onUnmounted(() => {
 });
 watch(() => props.userId, (newId) => { 
   activeTab.value = 'about'; 
+  postFilter.value = 'my_posts'; // Reset post filter
   fetchUserProfile(newId); 
 });
 watch(activeTab, (newTab) => {
   if (newTab === 'posts' || newTab === 'comments') {
     fetchInitialTabData(newTab);
-  } else {
-    if (observer) observer.disconnect();
+  }
+});
+watch(postFilter, () => {
+  if (activeTab.value === 'posts') {
+    fetchInitialTabData('posts');
   }
 });
 </script>
@@ -341,6 +465,11 @@ watch(activeTab, (newTab) => {
         />
         
         <div v-if="activeTab === 'posts'" class="scrollable-content">
+          <SubNavSlider 
+            :tabs="postTabs"
+            :active-tab="postFilter"
+            @set-tab="postFilter = $event"
+          />
           <div v-if="isTabLoading" class="loading-content">Caricamento...</div>
           <div v-else-if="userPosts.length > 0">
               <PostCard v-for="post in userPosts" :key="post.id" :post="post" />
@@ -377,10 +506,10 @@ watch(activeTab, (newTab) => {
   <input type="file" ref="bannerInputRef" @change="handleFileChange($event, 'banner')" accept="image/*" style="display: none;" />
   <UploadSuccessModal v-if="showSuccessModal" @close="closeSuccessModal" />
   
-  <SettingsMenu v-if="isSettingsMenuOpen" @close="isSettingsMenuOpen = false" />
+  <SettingsMenu :show="isSettingsMenuOpen" @close="isSettingsMenuOpen = false" />
   
   <FollowListModal 
-    v-if="isFollowModalOpen" 
+    :show="isFollowModalOpen" 
     :title="followModalTitle"
     :users="usersToShow"
     :loading="isFollowModalLoading"

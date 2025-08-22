@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, nextTick } from 'vue';
-import { db, auth } from '../firebase/config';
-import { collection, query, where, orderBy, getDocs, addDoc, doc, updateDoc, increment, deleteDoc, getDoc as getFirestoreDoc } from 'firebase/firestore';
+import { db, auth, storage } from '../firebase/config';
+import { collection, query, where, orderBy, getDocs, addDoc, doc, updateDoc, increment, deleteDoc, getDoc } from 'firebase/firestore';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { type Comment, type UserProfile } from '../types';
 import { Loader, Sparkles, Flame } from 'lucide-vue-next';
 import CommentItem from '../components/CommentItem.vue';
@@ -27,7 +28,7 @@ const fetchCurrentUser = async () => {
   const user = auth.currentUser;
   if (user) {
     const userDocRef = doc(db, "users", user.uid);
-    const userDocSnap = await getFirestoreDoc(userDocRef);
+    const userDocSnap = await getDoc(userDocRef);
     if (userDocSnap.exists()) {
       const data = userDocSnap.data();
       currentUser.value = { username: data.username, avatarUrl: data.avatarUrl };
@@ -51,7 +52,7 @@ const fetchComments = async (id: string, filter: 'new' | 'viral' = 'new') => {
     comments.value = [];
     try {
         const postDocRef = doc(db, "posts", id);
-        const postDocSnap = await getFirestoreDoc(postDocRef);
+        const postDocSnap = await getDoc(postDocRef);
         if (postDocSnap.exists()) {
             const postData = postDocSnap.data();
             postAuthorDetails.value = {
@@ -75,7 +76,7 @@ const fetchComments = async (id: string, filter: 'new' | 'viral' = 'new') => {
         const commentMap = new Map<string, CommentWithAuthor>();
 
         const authorIds = new Set(querySnapshot.docs.map(doc => doc.data().authorId));
-        const userDocs = await Promise.all([...authorIds].map(uid => getFirestoreDoc(doc(db, "users", uid))));
+        const userDocs = await Promise.all([...authorIds].map(uid => getDoc(doc(db, "users", uid))));
         const userMap = new Map<string, UserProfile>();
         userDocs.forEach(userDoc => {
             if (userDoc.exists()) userMap.set(userDoc.id, userDoc.data() as UserProfile);
@@ -116,15 +117,18 @@ const fetchComments = async (id: string, filter: 'new' | 'viral' = 'new') => {
         
         if (props.commentId) {
             highlightedCommentId.value = props.commentId;
-            await nextTick();
-            const el = document.getElementById(`comment-${props.commentId}`);
-            if (el) {
-                el.scrollIntoView({ behavior: 'smooth' });
-                el.classList.add('highlighted');
-                setTimeout(() => {
-                  el.classList.remove('highlighted');
-                }, 3000);
-            }
+            // Wait for the DOM to update, then try to find and scroll to the comment.
+            // Using a timeout gives deeply nested replies a moment to render.
+            setTimeout(() => {
+                const el = document.getElementById(`comment-${props.commentId}`);
+                if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    el.classList.add('highlighted');
+                    // The animation itself will handle fading out, so no need for remove timeout.
+                } else {
+                    console.warn("Could not find comment element to highlight.");
+                }
+            }, 300); // 300ms delay
         }
 
     } catch (e) {
@@ -135,15 +139,26 @@ const fetchComments = async (id: string, filter: 'new' | 'viral' = 'new') => {
     }
 };
 
-const submitComment = async (text: string) => {
-    if (!text.trim()) return;
+const submitComment = async (payload: { text: string, mediaFile: File | null, mediaUrl: string | null, mediaType: 'image' | 'gif' | null }) => {
+    const { text, mediaFile, mediaUrl, mediaType } = payload;
+    if (!text.trim() && !mediaFile && !mediaUrl) return;
+
     const user = auth.currentUser;
     if (!user || !currentUser.value) {
         errorMsg.value = "Devi essere loggato per commentare.";
         return;
     }
     try {
-        const commentData = {
+        let finalMediaUrl: string | null = mediaUrl; // Use GIF url directly
+
+        if (mediaFile) { // Upload image if it exists
+            const filePath = `comments/${user.uid}/${Date.now()}_${mediaFile.name}`;
+            const fileRef = storageRef(storage, filePath);
+            await uploadBytes(fileRef, mediaFile);
+            finalMediaUrl = await getDownloadURL(fileRef);
+        }
+
+        const commentData: any = {
             postId: props.postId,
             authorId: user.uid,
             text,
@@ -151,56 +166,85 @@ const submitComment = async (text: string) => {
             score: 0,
             upvotedBy: [],
             downvotedBy: [],
-            parentId: replyingTo.value?.id || null
+            parentId: replyingTo.value?.id || null,
+            mediaUrl: finalMediaUrl,
+            mediaType: mediaType
         };
         const newCommentRef = await addDoc(collection(db, "comments"), commentData);
 
-        const postRef = doc(db, "posts", props.postId);
-        const postSnap = await getFirestoreDoc(postRef);
-        if(postSnap.exists()){
-            const postData = postSnap.data();
-            const postAuthorId = postData.authorId;
-            
-            const notificationAuthorName = currentUser.value.username;
-            const notifiedUsers = new Set<string>();
+        // Optimistic update: add the new comment to the local state
+        const newCommentForState: CommentWithAuthor = {
+            ...commentData,
+            id: newCommentRef.id,
+            authorProfile: {
+                id: user.uid,
+                username: currentUser.value.username,
+                avatarUrl: currentUser.value.avatarUrl,
+                email: '', // non-essential for this view
+                createdAt: new Date() // non-essential for this view
+            },
+            authorUsername: currentUser.value.username,
+            authorAvatarUrl: currentUser.value.avatarUrl,
+            replies: []
+        };
 
-            if (replyingTo.value) {
-                if (replyingTo.value.authorId !== user.uid) {
-                  const notificationText = `${notificationAuthorName} ha risposto al tuo commento.`;
-                  await createNotification(replyingTo.value.authorId, 'reply', props.postId, notificationText, newCommentRef.id);
-                  notifiedUsers.add(replyingTo.value.authorId);
-                }
-            } else if (postAuthorId !== user.uid) {
-                const notificationText = `${notificationAuthorName} ha commentato il tuo post.`;
-                await createNotification(postAuthorId, 'comment', props.postId, notificationText, newCommentRef.id);
-                notifiedUsers.add(postAuthorId);
-            }
-
-            const mentionRegex = /@(\w+)/g;
-            const mentionedUsernames = [...new Set(text.match(mentionRegex)?.map(m => m.substring(1)))];
-            if (mentionedUsernames.length > 0) {
-                const usersRef = collection(db, "users");
-                const q = query(usersRef, where("username", "in", mentionedUsernames));
-                const usersSnapshot = await getDocs(q);
-                
-                usersSnapshot.forEach(userDoc => {
-                    const mentionedUserId = userDoc.id;
-                    if (mentionedUserId !== user.uid && !notifiedUsers.has(mentionedUserId)) {
-                        createNotification(
-                            mentionedUserId,
-                            'mention',
-                            props.postId,
-                            `${notificationAuthorName} ti ha menzionato in un commento.`,
-                            newCommentRef.id
-                        );
-                        notifiedUsers.add(mentionedUserId);
-                    }
-                });
-            }
+        if (commentData.parentId) {
+            // Logic to find and push to parent's replies array would be needed for nested optimistic updates
+            // For now, we will refetch to show replies correctly.
+            await fetchComments(props.postId, activeFilter.value);
+        } else {
+            comments.value.unshift(newCommentForState);
         }
 
+        const postRef = doc(db, "posts", props.postId);
         await updateDoc(postRef, { commentsCount: increment(1) });
-        await fetchComments(props.postId, activeFilter.value);
+
+        // Notification logic (can run in background, no need to await all of it here)
+        (async () => {
+            const postSnap = await getDoc(postRef);
+            if(postSnap.exists()){
+                const postData = postSnap.data();
+                const postAuthorId = postData.authorId;
+                
+                const notificationAuthorName = currentUser.value!.username;
+                const notifiedUsers = new Set<string>();
+
+                if (replyingTo.value) {
+                    if (replyingTo.value.authorId !== user.uid) {
+                      const notificationText = `${notificationAuthorName} ha risposto al tuo commento.`;
+                      await createNotification(replyingTo.value.authorId, 'reply', props.postId, notificationText, newCommentRef.id);
+                      notifiedUsers.add(replyingTo.value.authorId);
+                    }
+                } else if (postAuthorId !== user.uid) {
+                    const notificationText = `${notificationAuthorName} ha commentato il tuo post.`;
+                    await createNotification(postAuthorId, 'comment', props.postId, notificationText, newCommentRef.id);
+                    notifiedUsers.add(postAuthorId);
+                }
+
+                const mentionRegex = /@(\w+)/g;
+                const mentionedUsernames = [...new Set(text.match(mentionRegex)?.map(m => m.substring(1)))];
+                if (mentionedUsernames.length > 0) {
+                    const usersRef = collection(db, "users");
+                    const q = query(usersRef, where("username", "in", mentionedUsernames));
+                    const usersSnapshot = await getDocs(q);
+                    
+                    usersSnapshot.forEach(userDoc => {
+                        const mentionedUserId = userDoc.id;
+                        if (mentionedUserId !== user.uid && !notifiedUsers.has(mentionedUserId)) {
+                            createNotification(
+                                mentionedUserId,
+                                'mention',
+                                props.postId,
+                                `${notificationAuthorName} ti ha menzionato in un commento.`,
+                                newCommentRef.id
+                            );
+                            notifiedUsers.add(mentionedUserId);
+                        }
+                    });
+                }
+            }
+        })();
+
         replyingTo.value = null;
     } catch (e) {
         errorMsg.value = "Errore nell'invio del commento.";
@@ -226,7 +270,7 @@ const voteComment = async (payload: { commentId: string, voteType: 'up' | 'down'
     if (!auth.currentUser) return;
     const commentRef = doc(db, "comments", payload.commentId);
     const userId = auth.currentUser.uid;
-    const commentDoc = await getFirestoreDoc(commentRef);
+    const commentDoc = await getDoc(commentRef);
     if (!commentDoc.exists()) return;
     const commentData = commentDoc.data();
     let newScore = commentData.score;
@@ -312,7 +356,7 @@ watch(() => props.postId, (newId) => {
       <div v-if="comments.length === 0" class="empty-state">
         <p>Ancora nessun commento. Sii il primo a commentare!</p>
       </div>
-      <div v-else class="comments-list">
+      <transition-group v-else tag="div" name="comment-list" class="comments-list">
         <CommentItem
           v-for="comment in comments"
           :key="comment.id"
@@ -321,11 +365,12 @@ watch(() => props.postId, (newId) => {
           :post-id="props.postId"
           :post-is-anonymous="postAuthorDetails?.isAnonymous || false"
           :post-author-id="postAuthorDetails?.id || ''"
+          :are-replies-visible="false"
           @vote-comment="voteComment"
           @delete-comment="deleteComment"
           @reply-request="handleReplyRequest"
         />
-      </div>
+      </transition-group>
     </div>
     
     <div v-if="currentUser" class="comment-form-wrapper">
@@ -411,8 +456,34 @@ watch(() => props.postId, (newId) => {
   border-color: transparent;
   box-shadow: 0 4px 15px rgba(79, 70, 229, 0.4);
 }
+
+@keyframes highlight-animation {
+  0% {
+    background-color: rgba(79, 70, 229, 0.5);
+    box-shadow: 0 0 20px rgba(79, 70, 229, 0.7);
+  }
+  50% {
+    background-color: rgba(79, 70, 229, 0.2);
+    box-shadow: 0 0 5px rgba(79, 70, 229, 0.3);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
 .highlighted {
-  background-color: #4f46e5 !important;
-  transition: background-color 0.5s ease;
+  animation: highlight-animation 2.5s ease-out forwards;
+  border-radius: 8px; /* Add border-radius to make the background effect cleaner */
+}
+
+/* Comment list transition */
+.comment-list-enter-active,
+.comment-list-leave-active {
+  transition: all 0.5s ease;
+}
+.comment-list-enter-from,
+.comment-list-leave-to {
+  opacity: 0;
+  transform: translateY(20px);
 }
 </style>

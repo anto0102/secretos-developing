@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { ArrowUp, ArrowDown, MessageCircle } from 'lucide-vue-next';
+import { ArrowUp, ArrowDown, MessageCircle, Bookmark, Repeat } from 'lucide-vue-next';
 import { auth } from '../firebase/config';
 
 const props = defineProps<{
@@ -8,12 +8,17 @@ const props = defineProps<{
   commentsCount: number;
   upvotedBy: string[];
   downvotedBy: string[];
+  isSaved: boolean;
+  repostsCount: number;
+  repostedBy: string[]; // New prop
 }>();
 
-const emit = defineEmits(['vote', 'goToPost']);
+const emit = defineEmits(['vote', 'goToPost', 'toggle-save', 'repost', 'show-reposts']);
 
 const isUpvoted = computed(() => auth.currentUser && props.upvotedBy.includes(auth.currentUser.uid));
 const isDownvoted = computed(() => auth.currentUser && props.downvotedBy.includes(auth.currentUser.uid));
+const isReposted = computed(() => auth.currentUser && props.repostedBy.includes(auth.currentUser.uid)); // New computed
+
 </script>
 
 <template>
@@ -33,9 +38,27 @@ const isDownvoted = computed(() => auth.currentUser && props.downvotedBy.include
         @click.stop="emit('vote', 'down')"
       />
     </div>
-    <div class="comments" @click.stop="emit('goToPost')">
-      <MessageCircle :size="20" class="icon" />
-      <span>{{ commentsCount }}</span>
+    <div class="actions">
+      <div class="action-item comments" @click.stop="emit('goToPost')">
+        <MessageCircle :size="20" class="icon" />
+        <span>{{ commentsCount }}</span>
+      </div>
+      <div class="action-item reposts">
+        <Repeat 
+          :size="20" 
+          class="icon repost-icon" 
+          :class="{ reposted: isReposted }" 
+          @click.stop="emit('repost')" 
+        />
+        <span v-if="repostsCount > 0" @click.stop="emit('show-reposts')" class="repost-count">{{ repostsCount }}</span>
+      </div>
+      <div class="action-item save" @click.stop="emit('toggle-save')">
+        <Bookmark 
+          :size="20" 
+          class="icon save-icon"
+          :class="{ saved: isSaved }"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -49,28 +72,30 @@ const isDownvoted = computed(() => auth.currentUser && props.downvotedBy.include
   color: #a0a0a0;
 }
 .voting,
-.comments {
+.actions {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 1rem;
 }
-.comments {
+.action-item {
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
   cursor: pointer;
   transition: color 0.2s;
 }
-.comments:hover,
-.comments:hover .icon {
+.action-item:hover,
+.action-item:hover .icon {
   color: #fff;
 }
 .icon {
   color: #a0a0a0;
   cursor: pointer;
 }
-.vote-icon {
+.vote-icon, .repost-icon {
   transition: color 0.2s, transform 0.2s;
 }
-.vote-icon:hover {
+.vote-icon:hover, .repost-icon:hover {
   transform: scale(1.2);
   color: #fff;
 }
@@ -80,10 +105,26 @@ const isDownvoted = computed(() => auth.currentUser && props.downvotedBy.include
 .vote-icon.downvoted {
   color: #ef4444;
 }
+.repost-icon.reposted {
+  color: #34d399; /* A green color to indicate reposted */
+}
 .score {
   font-weight: bold;
   font-size: 0.9rem;
   min-width: 60px;
   text-align: center;
+}
+.save-icon {
+  transition: all 0.2s ease;
+}
+.save-icon.saved {
+  color: #4f46e5;
+  fill: #4f46e5;
+}
+.repost-count {
+  cursor: pointer;
+}
+.repost-count:hover {
+  text-decoration: underline;
 }
 </style>

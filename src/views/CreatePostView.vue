@@ -29,7 +29,12 @@ import {
     Lock,
     UserCircle,
     Venus,
-    Mars
+    Mars,
+    Lightbulb,
+    Smile,
+    Frown,
+    BookOpen,
+    Landmark
 } from 'lucide-vue-next';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { type Post } from '../types';
@@ -44,6 +49,15 @@ const router = useRouter();
 const postText = ref('');
 const errorMsg = ref('');
 const isLoading = ref(false);
+
+const channels = [
+  { id: 'proposte', label: 'Proposte', icon: Lightbulb },
+  { id: 'meme', label: 'Meme', icon: Smile },
+  { id: 'sad', label: 'Sad', icon: Frown },
+  { id: 'conoscenze', label: 'Conoscenze', icon: BookOpen },
+  { id: 'politica', label: 'Politica', icon: Landmark },
+];
+const selectedChannel = ref('');
 
 const currentUser = ref<{
     username: string;
@@ -156,6 +170,9 @@ const fetchPostToEdit = async (id: string) => {
         isAnonymous.value = postData.isAnonymous || false;
         isPoll.value = postData.isPoll || false;
         isMediaSpoiler.value = postData.isMediaSpoiler || false;
+        if (postData.channel) {
+            selectedChannel.value = postData.channel;
+        }
         
         if (postData.mediaUrl) {
             mediaPreviewUrl.value = postData.mediaUrl;
@@ -226,6 +243,11 @@ const currentAnonymousIcon = computed(() => {
 const charsRemaining = computed(() => MAX_CHARS - postText.value.length);
 
 const isFormValid = computed(() => {
+  if (isEditMode.value) {
+    const textLen = postText.value.trim().length;
+    return textLen > 0 && textLen <= MAX_CHARS;
+  }
+
   const textLen = postText.value.trim().length;
   const isTextValid = textLen > 0 && textLen <= MAX_CHARS;
 
@@ -234,7 +256,8 @@ const isFormValid = computed(() => {
     return isTextValid && validOptions.length >= 2;
   }
   
-  return isTextValid || selectedMediaFile.value;
+  // For a normal post, either text or media is required. Channel is optional.
+  return isTextValid || !!selectedMediaFile.value;
 });
 
 const addPollOption = () => {
@@ -340,7 +363,9 @@ const submitPost = async () => {
             downvotedBy: [],
             mediaUrl: mediaUrl,
             mediaType: mediaType.value,
-            isMediaSpoiler: isMediaSpoiler.value
+            isMediaSpoiler: isMediaSpoiler.value,
+            channel: selectedChannel.value,
+            repostOf: null // Explicitly set to null for original posts
         };
 
         if (isAnonymous.value && currentUser.value) {
@@ -435,6 +460,24 @@ const submitPost = async () => {
             </div>
           </div>
           
+          <div class="channel-selector">
+            <h3 class="channel-title">Seleziona un canale *</h3>
+            <div class="channel-options">
+              <button
+                type="button"
+                v-for="channel in channels"
+                :key="channel.id"
+                class="channel-btn"
+                :class="{ active: selectedChannel === channel.id }"
+                @click="selectedChannel = channel.id"
+                :disabled="isEditMode"
+              >
+                <component :is="channel.icon" :size="20" />
+                <span>{{ channel.label }}</span>
+              </button>
+            </div>
+          </div>
+
           <transition name="fade">
             <div v-if="mediaPreviewUrl" class="media-preview">
               <img v-if="mediaType === 'image'" :src="mediaPreviewUrl" alt="Anteprima media" />
@@ -783,5 +826,47 @@ input:checked + .slider:before { transform: translateX(20px); }
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+.channel-selector {
+  margin-top: 1.5rem;
+}
+.channel-title {
+  font-size: 0.9rem;
+  font-weight: bold;
+  color: #a0a0a0;
+  text-transform: uppercase;
+  margin: 0 0 1rem 0;
+}
+.channel-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.channel-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background-color: #2a2a2a;
+  border: 1px solid #363636;
+  color: #a0a0a0;
+  padding: 0.6rem 1rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: bold;
+}
+.channel-btn:hover:not(:disabled) {
+  background-color: #363636;
+  color: #fff;
+}
+.channel-btn.active {
+  background-color: #4f46e5;
+  color: #fff;
+  border-color: #4f46e5;
+}
+.channel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

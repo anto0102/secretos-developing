@@ -1,21 +1,40 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { db, auth } from '../firebase/config';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
-import { ArrowLeft, Loader } from 'lucide-vue-next';
+import { onAuthStateChanged } from 'firebase/auth';
+import { Loader } from 'lucide-vue-next';
 import { type Post } from '../types';
 
 import PostDetail from '../components/PostDetail.vue';
 import PostCommentsView from './PostCommentsView.vue';
+import StickyHeader from '../components/StickyHeader.vue';
 
 const props = defineProps<{ postId: string }>();
 const router = useRouter();
+const route = useRoute();
 
 const post = ref<Post | null>(null);
 const isLoading = ref(true);
 const errorMsg = ref('');
+const currentUser = ref<{ id: string, avatarUrl: string } | null>(null);
+const commentIdFromQuery = ref(route.query.commentId as string | undefined);
 let unsubscribe: (() => void) | null = null;
+
+const headerTitle = computed(() => post.value?.author ? `Post di ${post.value.author}` : 'Post');
+
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    const userDocRef = doc(db, "users", user.uid);
+    const userDocSnap = await getDoc(userDocRef);
+    if (userDocSnap.exists()) {
+      currentUser.value = { id: user.uid, avatarUrl: userDocSnap.data().avatarUrl };
+    }
+  } else {
+    currentUser.value = null;
+  }
+});
 
 const setupPostListener = (id: string) => {
     isLoading.value = true;
@@ -65,29 +84,33 @@ watch(() => props.postId, (newId) => {
 
 <template>
   <div class="post-view-page">
-    <header class="page-header">
-      <button @click="router.back()" class="header-btn"><ArrowLeft :size="22" /></button>
-      <h1 class="page-title">Post</h1>
-      <div></div>
-    </header>
+    <StickyHeader 
+      :title="headerTitle"
+      :user-avatar-url="currentUser?.avatarUrl"
+      :user-id="currentUser?.id"
+    />
 
-    <div v-if="isLoading" class="loading">
-      <Loader :size="40" class="spinner" />
-      <span>Caricamento post...</span>
-    </div>
+    <div class="content-wrapper">
+      <div v-if="isLoading" class="loading">
+        <Loader :size="40" class="spinner" />
+        <span>Caricamento post...</span>
+      </div>
 
-    <div v-else-if="errorMsg" class="error-state">
-      <p>{{ errorMsg }}</p>
-    </div>
+      <div v-else-if="errorMsg" class="error-state">
+        <p>{{ errorMsg }}</p>
+      </div>
 
-    <div v-else-if="post" class="post-container">
-      <PostDetail :post="post" @delete-post="handleDeletePost" />
-      
-      <PostCommentsView :post-id="post.id" />
-    </div>
+      <div v-else-if="post" class="post-container">
+        <PostDetail :post="post" @delete-post="handleDeletePost" />
+        
+        <transition name="fade" appear>
+          <PostCommentsView :post-id="post.id" :comment-id="commentIdFromQuery" />
+        </transition>
+      </div>
 
-    <div v-else class="error-state">
-      <p>Post non trovato.</p>
+      <div v-else class="error-state">
+        <p>Post non trovato.</p>
+      </div>
     </div>
   </div>
 </template>
@@ -96,35 +119,10 @@ watch(() => props.postId, (newId) => {
 .post-view-page {
   max-width: 900px;
   margin: 0 auto;
+  color: #fff;
+}
+.content-wrapper {
   padding: 1.5rem;
-  color: #fff;
-}
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 2rem;
-}
-.page-title {
-  font-size: 1.5rem;
-  font-weight: bold;
-}
-.header-btn {
-  background: none;
-  border: 1px solid #363636;
-  color: #a0a0a0;
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-.header-btn:hover {
-  color: #fff;
-  background-color: #2a2a2a;
 }
 .loading, .error-state {
   text-align: center;
@@ -141,5 +139,12 @@ watch(() => props.postId, (newId) => {
 }
 .post-container {
   padding-bottom: 80px;
+}
+
+.fade-enter-active {
+  transition: opacity 0.5s ease;
+}
+.fade-enter-from {
+  opacity: 0;
 }
 </style>

@@ -48,7 +48,8 @@ const onTextClick = (event: MouseEvent) => {
         :author-avatar-url="comment.authorAvatarUrl"
         :author-username="comment.authorUsername"
         :author-id="comment.authorId"
-        :author-primary-badge="comment.authorProfile?.primaryBadge"
+        :author-primary-official-badge="comment.authorProfile?.primaryOfficialBadge"
+        :author-primary-custom-badge-id="comment.authorProfile?.primaryCustomBadge"
         :reply-count="comment.replies?.length"
         :created-at="comment.createdAt"
         :are-replies-visible="areRepliesVisibleInternal"
@@ -59,6 +60,11 @@ const onTextClick = (event: MouseEvent) => {
         @toggle-replies="handleToggleReplies"
       />
       <p class="comment-text" @click="onTextClick" v-html="parsedCommentText"></p>
+      
+      <div v-if="comment.mediaUrl" class="comment-media">
+        <img :src="comment.mediaUrl" :alt="`Media for comment ${comment.id}`" class="comment-image" />
+      </div>
+
       <CommentActions
         :comment="comment"
         @vote-comment="$emit('vote-comment', $event)"
@@ -110,5 +116,17 @@ const onTextClick = (event: MouseEvent) => {
 }
 .comment-text ::v-deep .mention:hover {
     text-decoration: underline;
+}
+
+.comment-media {
+  padding-left: 52px; /* Same as comment text for alignment */
+  margin-top: 0.75rem;
+}
+.comment-image {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 8px;
+  border: 1px solid #4a4a4a;
+  object-fit: cover;
 }
 </style>

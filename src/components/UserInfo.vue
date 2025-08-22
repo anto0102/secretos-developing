@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watchEffect } from 'vue';
 import { useRouter } from 'vue-router';
+import { db } from '../firebase/config';
+import { doc, getDoc } from 'firebase/firestore';
 import { Camera, LayoutGrid, MessageSquare, Image, Loader, MoreHorizontal, UserPlus, UserCheck } from 'lucide-vue-next';
 import BadgeIcon from './BadgeIcon.vue';
 
@@ -9,15 +11,31 @@ const props = defineProps({
   isUploading: String,
   activeTab: String,
   isOwner: Boolean,
-  authorPrimaryBadge: String,
   isFollowing: Boolean,
   isFollowLoading: Boolean,
   followersCount: Number,
   followingCount: Number,
 });
 
-const emit = defineEmits(['triggerFileUpload', 'update:activeTab', 'openSettingsMenu', 'toggle-follow', 'show-follow-list']); // <-- Aggiungi l'evento
+const emit = defineEmits(['triggerFileUpload', 'update:activeTab', 'openSettingsMenu', 'toggle-follow', 'show-follow-list']);
 const router = useRouter();
+
+const customPrimaryBadgeData = ref<any>(null);
+
+watchEffect(async () => {
+    if (props.userProfile?.primaryCustomBadge && props.userProfile?.id) {
+        try {
+            const badgeRef = doc(db, 'users', props.userProfile.id, 'customBadges', props.userProfile.primaryCustomBadge);
+            const badgeSnap = await getDoc(badgeRef);
+            customPrimaryBadgeData.value = badgeSnap.exists() ? badgeSnap.data() : null;
+        } catch (e) {
+            console.error("Error fetching custom badge", e);
+            customPrimaryBadgeData.value = null;
+        }
+    } else {
+        customPrimaryBadgeData.value = null;
+    }
+});
 
 const followButtonText = computed(() => {
     if (props.isFollowing) return 'Segui già';
@@ -41,7 +59,10 @@ const followButtonText = computed(() => {
       <div class="user-details">
         <div class="username-badge-row">
             <h1 class="username premium-username">{{ userProfile?.username }}</h1>
-            <BadgeIcon v-if="userProfile?.primaryBadge" :badge-id="userProfile.primaryBadge" :size="24" />
+            <BadgeIcon v-if="userProfile?.primaryOfficialBadge" :badge-id="userProfile.primaryOfficialBadge" :size="28" />
+            <div v-if="customPrimaryBadgeData" class="custom-badge-wrapper" :title="customPrimaryBadgeData.name">
+                <img :src="customPrimaryBadgeData.imageUrl" class="custom-badge-icon" :alt="customPrimaryBadgeData.name" />
+            </div>
         </div>
         <div class="stats-container">
             <div class="stat-item" @click="emit('show-follow-list', 'followers')">
@@ -87,7 +108,7 @@ const followButtonText = computed(() => {
 .actions-row { display: flex; justify-content: space-between; align-items: center; width: 100%; }
 .avatar-container { width: 130px; height: 130px; border-radius: 50%; border: 4px solid #1a1a1a; background-color: #1a1a1a; overflow: hidden; position: relative; flex-shrink: 0; }
 .user-details { display: flex; flex-direction: column; gap: 0.5rem; padding-bottom: 0.5rem; }
-.username-badge-row { display: flex; align-items: center; gap: 0.75rem; }
+.username-badge-row { display: flex; align-items: center; gap: 0.5rem; }
 .username { font-size: 2.25rem; font-weight: 700; margin: 0; line-height: 1; }
 .premium-username { background: linear-gradient(to right, #bdbdbd, #e0e0e0, #bdbdbd); background-clip: text; -webkit-background-clip: text; color: transparent; }
 .stats-container { display: flex; gap: 1.5rem; color: #a0a0a0; }
@@ -111,6 +132,21 @@ const followButtonText = computed(() => {
 .spinner { border: 4px solid rgba(255, 255, 255, 0.3); border-radius: 50%; border-top: 4px solid #fff; width: 40px; height: 40px; animation: spin 1s linear infinite; }
 .follow-btn .spinner { width: 16px; height: 16px; border-width: 2px; }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+.custom-badge-wrapper {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.custom-badge-icon {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
 @media (max-width: 768px) {
     .user-info-layout { align-items: center; }
     .user-identity { flex-direction: column; align-items: center; text-align: center; }

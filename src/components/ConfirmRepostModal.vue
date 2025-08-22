@@ -1,18 +1,14 @@
 <script setup lang="ts">
-import { ref, defineProps, defineEmits } from 'vue';
-import { X } from 'lucide-vue-next';
+import { ref } from 'vue';
+import { Loader } from 'lucide-vue-next';
 import { useBottomSheet } from '../utils/useBottomSheet';
 
 defineProps<{
   show: boolean;
-  tabs: Array<{
-    key: string;
-    label: string;
-    icon: any;
-  }>;
+  isLoading: boolean;
 }>();
 
-const emit = defineEmits(['close', 'set-filter']);
+const emit = defineEmits(['confirm', 'close']);
 const sheetRef = ref<HTMLElement | null>(null);
 
 const handleClose = () => {
@@ -24,9 +20,8 @@ const { style } = useBottomSheet({
   onClose: handleClose,
 });
 
-const handleSetFilter = (filter: string) => {
-  emit('set-filter', filter);
-  handleClose();
+const handleConfirm = () => {
+  emit('confirm');
 };
 </script>
 
@@ -37,21 +32,19 @@ const handleSetFilter = (filter: string) => {
         <div class="drag-handle-container">
           <div class="drag-handle"></div>
         </div>
-        <button @click="handleClose" class="close-btn">
-          <X :size="24" />
-        </button>
-        <h2 class="menu-title">Altri Filtri</h2>
-        <nav class="filter-nav">
-          <button
-            v-for="tab in tabs"
-            :key="tab.key"
-            class="nav-item"
-            @click="handleSetFilter(tab.key)"
-          >
-            <component :is="tab.icon" :size="20" />
-            <span>{{ tab.label }}</span>
-          </button>
-        </nav>
+        
+        <div class="content">
+          <h3>Conferma Repost</h3>
+          <p>Sei sicuro di voler ripubblicare questo post sul tuo profilo?</p>
+          <div class="actions">
+            <button @click="handleClose" class="btn-secondary" :disabled="isLoading">Annulla</button>
+            <button @click="handleConfirm" class="btn-primary" :disabled="isLoading">
+              <Loader v-if="isLoading" :size="20" class="spinner" />
+              <span v-else>Conferma</span>
+            </button>
+          </div>
+        </div>
+
       </div>
     </div>
   </transition>
@@ -115,27 +108,38 @@ const handleSetFilter = (filter: string) => {
 .drag-handle-container { padding: 0.75rem; cursor: grab; }
 .drag-handle { width: 40px; height: 5px; background-color: #4a4a4a; border-radius: 2.5px; margin: 0 auto; }
 
-.close-btn {
-  position: absolute; top: 1rem; right: 1rem; background: none; border: none;
-  color: #a0a0a0; cursor: pointer; padding: 0.5rem; border-radius: 50%;
-  transition: color 0.2s, background-color 0.2s;
-}
-.close-btn:hover { color: #fff; background-color: #2a2a2a; }
+.content { padding: 0 1.5rem 1.5rem; text-align: center; }
 
-.menu-title {
-  text-align: center; font-size: 1.25rem; font-weight: 600;
-  padding: 0 1rem 1rem; flex-shrink: 0;
+h3 { margin-top: 0; color: #fff; }
+p { color: #a0a0a0; margin-bottom: 1.5rem; }
+.actions {
+  display: flex;
+  gap: 1rem;
 }
-
-.filter-nav {
-  display: flex; flex-direction: column; gap: 0.5rem;
-  padding: 0 1.5rem 1.5rem;
+.actions button {
+  flex: 1;
+  padding: 0.85rem;
+  border: none;
+  border-radius: 12px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 1rem;
 }
-
-.nav-item {
-  display: flex; align-items: center; gap: 1rem; padding: 1rem;
-  border-radius: 12px; background: none; border: none; color: #e0e0e0;
-  text-align: left; font-size: 1rem; cursor: pointer; transition: background-color 0.2s;
+.btn-primary {
+  background-color: #4f46e5;
+  color: #fff;
 }
-.nav-item:hover { background-color: #2a2a2a; }
+.btn-primary:hover:not(:disabled) { background-color: #4338ca; }
+.btn-secondary {
+  background-color: #363636;
+  color: #fff;
+}
+.btn-secondary:hover:not(:disabled) { background-color: #444; }
+button:disabled { opacity: 0.7; cursor: not-allowed; }
+.spinner { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 </style>

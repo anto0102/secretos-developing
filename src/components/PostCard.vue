@@ -2,12 +2,15 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { db, auth } from '../firebase/config';
 import { doc, deleteDoc, updateDoc, arrayRemove, arrayUnion, increment, onSnapshot, getDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useRouter } from 'vue-router';
-import { X, CheckCircle, Eye } from 'lucide-vue-next';
+import { X, CheckCircle, Eye, Repeat } from 'lucide-vue-next';
 import { type Post, type UserProfile } from '../types';
 import PostHeader from './PostHeader.vue';
 import PostMedia from './PostMedia.vue';
 import PostFooter from './PostFooter.vue';
+import RepostListModal from './RepostListModal.vue';
+import ConfirmRepostModal from './ConfirmRepostModal.vue'; // Import new modal
 import { formatTimeAgo } from '../utils/dateUtils';
 import { parseText, handleMentionClick } from '../utils/textParser';
 
@@ -19,7 +22,17 @@ const props = defineProps<{ post: PostWithAuthor }>();
 const router = useRouter();
 
 const livePost = ref<PostWithAuthor | null>(null);
+const originalPost = ref<PostWithAuthor | null>(null); // For reposts
+const isLoadingOriginal = ref(false);
 const parsedPostText = ref('');
+const loggedInUserProfile = ref<UserProfile | null>(null);
+const isRepostListModalOpen = ref(false);
+const isConfirmRepostModalOpen = ref(false); // For new modal
+const isReposting = ref(false); // To show loading state in modal
+
+let postUnsubscribe: (() => void) | null = null;
+let userUnsubscribe: (() => void) | null = null;
+let timeoutId: number | null = null;
 
 watch(() => livePost.value?.text, async (newText) => {
   const textToParse = newText || props.post.text;
@@ -30,24 +43,32 @@ watch(() => livePost.value?.text, async (newText) => {
   }
 }, { immediate: true });
 
-
-let unsubscribe: (() => void) | null = null;
-let timeoutId: number | null = null;
-
 const isVotersModalOpen = ref(false);
 const votersList = ref<{ optionText: string, users: {id: string, username: string, avatarUrl: string}[] }[]>([]);
 const isPollExpiredRef = ref(false);
 
 const setupPostListener = (id: string) => {
-  if (unsubscribe) unsubscribe();
+  if (postUnsubscribe) postUnsubscribe();
   const postRef = doc(db, 'posts', id);
-  unsubscribe = onSnapshot(postRef, (docSnap) => {
+  postUnsubscribe = onSnapshot(postRef, (docSnap) => {
     if (docSnap.exists()) {
       livePost.value = { ...props.post, ...docSnap.data(), id: docSnap.id } as PostWithAuthor;
     } else {
       livePost.value = null;
     }
   });
+};
+
+const setupLoggedInUserListener = (uid: string | null) => {
+    if (userUnsubscribe) userUnsubscribe();
+    if (uid) {
+        const userRef = doc(db, 'users', uid);
+        userUnsubscribe = onSnapshot(userRef, (docSnap) => {
+            loggedInUserProfile.value = docSnap.exists() ? docSnap.data() as UserProfile : null;
+        });
+    } else {
+        loggedInUserProfile.value = null;
+    }
 };
 
 const setupPollExpirationTimeout = () => {
@@ -75,10 +96,14 @@ const setupPollExpirationTimeout = () => {
 onMounted(() => {
   setupPostListener(props.post.id);
   setupPollExpirationTimeout();
+  auth.onAuthStateChanged(user => {
+      setupLoggedInUserListener(user ? user.uid : null);
+  });
 });
 
 onUnmounted(() => {
-  if (unsubscribe) unsubscribe();
+  if (postUnsubscribe) postUnsubscribe();
+  if (userUnsubscribe) userUnsubscribe();
   if (timeoutId) clearTimeout(timeoutId);
 });
 
@@ -89,8 +114,31 @@ watch(livePost, () => {
     setupPollExpirationTimeout();
 });
 
-const postData = computed(() => livePost.value || props.post);
+watch(() => props.post.repostOf, async (repostOfId) => {
+    if (repostOfId) {
+        isLoadingOriginal.value = true;
+        const postRef = doc(db, "posts", repostOfId);
+        const postSnap = await getDoc(postRef);
+        if (postSnap.exists()) {
+            const postData = { ...postSnap.data(), id: postSnap.id } as Post;
+            const authorRef = doc(db, "users", postData.authorId);
+            const authorSnap = await getDoc(authorRef);
+            if (authorSnap.exists()) {
+                postData.authorProfile = authorSnap.data() as UserProfile;
+            }
+            originalPost.value = postData as PostWithAuthor;
+        }
+        isLoadingOriginal.value = false;
+    }
+}, { immediate: true });
+
+const postData = computed(() => originalPost.value || livePost.value || props.post);
 const isPollExpired = computed(() => isPollExpiredRef.value);
+
+const isPostSaved = computed(() => {
+    if (!loggedInUserProfile.value?.savedPosts) return false;
+    return loggedInUserProfile.value.savedPosts.includes(props.post.id);
+});
 
 const totalVotes = computed(() => {
   if (!postData.value.isPoll || !postData.value.pollOptions) return 0;
@@ -185,6 +233,41 @@ const handleVote = async (voteType: 'up' | 'down') => {
   }
 };
 
+const handleToggleSave = async () => {
+    const user = auth.currentUser;
+    if (!user) return; // Or prompt to login
+    const userRef = doc(db, 'users', user.uid);
+    if (isPostSaved.value) {
+        await updateDoc(userRef, { savedPosts: arrayRemove(props.post.id) });
+    } else {
+        await updateDoc(userRef, { savedPosts: arrayUnion(props.post.id) });
+    }
+};
+
+const handleRepost = () => {
+    if (!auth.currentUser) {
+        alert("Devi essere loggato per repostare.");
+        return;
+    }
+    isConfirmRepostModalOpen.value = true;
+};
+
+const executeRepost = async () => {
+    isReposting.value = true;
+    try {
+        const functions = getFunctions();
+        const repostPostFn = httpsCallable(functions, 'repostPost');
+        await repostPostFn({ originalPostId: postData.value.id });
+        // alert("Post repostato con successo!");
+    } catch (error: any) {
+        console.error("Errore durante il repost:", error);
+        alert(`Errore: ${error.message}`);
+    } finally {
+        isReposting.value = false;
+        isConfirmRepostModalOpen.value = false;
+    }
+};
+
 const handleDeletePost = async () => {
     if (!confirm("Sei sicuro di voler eliminare questo post?")) return;
     try {
@@ -192,6 +275,10 @@ const handleDeletePost = async () => {
     } catch (error) {
         console.error("Errore durante l'eliminazione del post:", error);
     }
+};
+
+const handleShowReposts = () => {
+    isRepostListModalOpen.value = true;
 };
 
 const showVoters = async () => {
@@ -232,15 +319,24 @@ const onTextClick = (event: MouseEvent) => {
 
 <template>
   <div class="post-card">
-    <PostHeader
-      :author-id="postData.authorId"
-      :author="postData.author"
-      :author-avatar-url="postData.authorProfile?.avatarUrl"
-      :author-primary-badge="postData.authorProfile?.primaryBadge"
-      :is-anonymous="postData.isAnonymous"
-      :post-id="postData.id"
-      @delete-post="handleDeletePost"
-      @edit-post="handleEditPost"
+    <div v-if="post.repostOf" class="repost-header">
+      <Repeat :size="16" class="repost-icon" />
+      <span>Repostato da <router-link :to="{ name: 'Profile', params: { userId: post.authorId } }" class="repost-author">@{{ post.author }}</router-link></span>
+    </div>
+
+    <div v-if="isLoadingOriginal" class="loading-original">Caricamento...</div>
+    <template v-else>
+      <PostHeader
+        :author-id="postData.authorId"
+        :author="postData.author"
+        :author-avatar-url="postData.authorProfile?.avatarUrl"
+        :author-primary-official-badge="postData.authorProfile?.primaryOfficialBadge"
+        :author-primary-custom-badge-id="postData.authorProfile?.primaryCustomBadge"
+        :is-anonymous="postData.isAnonymous"
+        :post-id="postData.id"
+        :channel="postData.channel"
+        @delete-post="handleDeletePost"
+        @edit-post="handleEditPost"
     />
 
     <p class="card-text" @click="onTextClick" v-html="parsedPostText"></p>
@@ -288,9 +384,15 @@ const onTextClick = (event: MouseEvent) => {
     <PostFooter
       :score="postData.score"
       :comments-count="postData.commentsCount"
-      :upvoted-by="postData.upvotedBy"
-      :downvoted-by="postData.downvotedBy"
+      :upvoted-by="postData.upvotedBy || []"
+      :downvoted-by="postData.downvotedBy || []"
+      :is-saved="isPostSaved"
+      :reposts-count="postData.repostsCount || 0"
+      :reposted-by="postData.repostedBy || []"
       @vote="handleVote"
+      @toggle-save="handleToggleSave"
+      @repost="handleRepost"
+      @show-reposts="handleShowReposts"
       @go-to-post="router.push({ name: 'PostView', params: { postId: postData.id } })"
     />
     
@@ -319,6 +421,20 @@ const onTextClick = (event: MouseEvent) => {
         <span v-if="postData.isEdited" class="edited-label"> (modificato {{ formatTimeAgo(postData.editedAt) }})</span>
       </span>
     </div>
+    </template>
+
+    <RepostListModal 
+      :show="isRepostListModalOpen"
+      :post-id="postData.id"
+      @close="isRepostListModalOpen = false"
+    />
+
+    <ConfirmRepostModal
+      :show="isConfirmRepostModalOpen"
+      :is-loading="isReposting"
+      @close="isConfirmRepostModalOpen = false"
+      @confirm="executeRepost"
+    />
 
   </div>
 </template>
@@ -331,7 +447,7 @@ const onTextClick = (event: MouseEvent) => {
   margin-bottom: 1rem;
   border: 1px solid #363636;
   position: relative;
-  overflow-x: hidden;
+  overflow: visible; /* Changed from overflow-x: hidden */
 }
 .card-text {
   color: #e0e0e0;
@@ -582,5 +698,32 @@ const onTextClick = (event: MouseEvent) => {
 
 .edited-label {
   margin-left: 0.5rem;
+}
+
+.repost-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: #a0a0a0;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #363636;
+}
+.repost-icon {
+  flex-shrink: 0;
+}
+.repost-author {
+  color: #c0c0c0;
+  font-weight: bold;
+  text-decoration: none;
+}
+.repost-author:hover {
+  text-decoration: underline;
+}
+.loading-original {
+  text-align: center;
+  padding: 2rem;
+  color: #a0a0a0;
 }
 </style>

@@ -9,6 +9,10 @@ const message = ref('');
 const messageType = ref<'success' | 'error'>('success');
 const isLoading = ref(false);
 
+const isBackfillLoading = ref(false);
+const backfillMessage = ref('');
+const backfillMessageType = ref<'success' | 'error'>('success');
+
 onMounted(async () => {
   const user = auth.currentUser;
   if (user) {
@@ -29,7 +33,6 @@ const updateUsername = async () => {
     return;
   }
 
-  // Controlla se il nuovo username è già in uso
   const usersRef = collection(db, 'users');
   const q = query(usersRef, where("username", "==", username.value.trim()));
   const querySnapshot = await getDocs(q);
@@ -57,6 +60,24 @@ const updateUsername = async () => {
     isLoading.value = false;
   }
 };
+
+const runBackfill = async () => {
+  isBackfillLoading.value = true;
+  backfillMessage.value = '';
+  try {
+    const functions = getFunctions();
+    const backfillRepostOf = httpsCallable(functions, 'backfillRepostOf');
+    const result: any = await backfillRepostOf();
+    backfillMessageType.value = 'success';
+    backfillMessage.value = result.data.message || 'Operazione completata con successo!';
+  } catch (error) {
+    backfillMessageType.value = 'error';
+    backfillMessage.value = 'Errore durante l\'operazione di backfill.';
+    console.error(error);
+  } finally {
+    isBackfillLoading.value = false;
+  }
+};
 </script>
 
 <template>
@@ -73,6 +94,15 @@ const updateUsername = async () => {
         {{ isLoading ? 'Salvataggio...' : 'Salva Modifiche' }}
       </button>
       <p v-if="message" :class="['message', messageType]">{{ message }}</p>
+    </div>
+
+    <div class="settings-card" style="margin-top: 2rem;">
+      <h3>Impostazioni Avanzate</h3>
+      <p>Esegui azioni di manutenzione. Usare con cautela.</p>
+      <button @click="runBackfill" :disabled="isBackfillLoading">
+        {{ isBackfillLoading ? 'Aggiornamento in corso...' : 'Correggi Dati Post (Backfill)' }}
+      </button>
+      <p v-if="backfillMessage" :class="['message', backfillMessageType]">{{ backfillMessage }}</p>
     </div>
   </div>
 </template>

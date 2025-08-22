@@ -7,7 +7,7 @@ import { db, auth } from '../firebase/config';
 import { collection, query, orderBy, doc, getDoc, limit, startAfter, getDocs, DocumentSnapshot, where } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { type Post, type UserProfile } from '../types';
-import { Loader, Sparkles, Flame, Shuffle, Users } from 'lucide-vue-next';
+import { Loader, Sparkles, Flame, Shuffle, Users, Lightbulb, Smile, Frown, BookOpen, Landmark } from 'lucide-vue-next';
 import NProgress from '../utils/loadingIndicator';
 
 interface PostWithAuthor extends Post {
@@ -16,7 +16,13 @@ interface PostWithAuthor extends Post {
 
 const posts = ref<PostWithAuthor[]>([]);
 const isLoading = ref(true);
-const activeFilter = ref<'new' | 'viral' | 'random' | 'following'>('new');
+
+const channelFilters = ['proposte', 'meme', 'sad', 'conoscenze', 'politica'];
+type ChannelFilter = 'proposte' | 'meme' | 'sad' | 'conoscenze' | 'politica';
+type StandardFilter = 'new' | 'viral' | 'random' | 'following';
+type ActiveFilter = StandardFilter | ChannelFilter;
+
+const activeFilter = ref<ActiveFilter>('new');
 const lastVisibleDoc = ref<DocumentSnapshot | null>(null);
 const isMoreLoading = ref(false);
 const hasMore = ref(true);
@@ -30,7 +36,7 @@ const isFilterModalOpen = ref(false);
 const checkMobile = () => { isMobile.value = window.innerWidth < 768; };
 
 const allFilterTabs = computed(() => {
-  const tabs: any[] = [
+  const tabs: Array<{ key: ActiveFilter; label: string; icon: any }> = [
     { key: 'new', label: 'Nuovi', icon: Sparkles },
     { key: 'viral', label: 'Virali', icon: Flame },
   ];
@@ -38,13 +44,23 @@ const allFilterTabs = computed(() => {
     tabs.splice(1, 0, { key: 'following', label: 'Seguiti', icon: Users });
   }
   tabs.push({ key: 'random', label: 'Random', icon: Shuffle });
+  
+  // Aggiungi i canali
+  tabs.push(...[
+    { key: 'proposte', label: 'Proposte', icon: Lightbulb },
+    { key: 'meme', label: 'Meme', icon: Smile },
+    { key: 'sad', label: 'Sad', icon: Frown },
+    { key: 'conoscenze', label: 'Conoscenze', icon: BookOpen },
+    { key: 'politica', label: 'Politica', icon: Landmark },
+  ]);
+
   return tabs;
 });
 
 const visibleTabs = computed(() => isMobile.value ? allFilterTabs.value.slice(0, 3) : allFilterTabs.value);
 const hiddenTabs = computed(() => isMobile.value ? allFilterTabs.value.slice(3) : []);
 
-const setFilter = (filterKey: 'new' | 'viral' | 'random' | 'following') => {
+const setFilter = (filterKey: ActiveFilter) => {
     isFilterModalOpen.value = false;
     if (activeFilter.value === filterKey) return;
     activeFilter.value = filterKey;
@@ -88,7 +104,7 @@ const setupObserver = () => {
     }
 };
 
-const fetchPosts = async (filter: 'new' | 'viral' | 'random' | 'following') => {
+const fetchPosts = async (filter: ActiveFilter) => {
     isLoading.value = true;
     NProgress.start();
     posts.value = [];
@@ -102,7 +118,7 @@ const fetchPosts = async (filter: 'new' | 'viral' | 'random' | 'following') => {
     try {
         if (filter === 'random') {
             hasMore.value = false;
-            const randomQuery = query(baseCollection, orderBy("createdAt", "desc"), limit(50));
+            const randomQuery = query(baseCollection, where("repostOf", "==", null), orderBy("createdAt", "desc"), limit(50));
             const querySnapshot = await getDocs(randomQuery);
             const postsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Post));
             posts.value = shuffleArray(await enrichPostsWithAuthors(postsData));
@@ -119,14 +135,15 @@ const fetchPosts = async (filter: 'new' | 'viral' | 'random' | 'following') => {
                 posts.value = []; hasMore.value = false;
                 isLoading.value = false; NProgress.done(); return;
             }
-            // NOTA: Firestore limita la clausola 'in' a 30 elementi.
-            // Questa implementazione disabilita lo scroll infinito se si seguono più di 30 persone.
             if (followingList.length > 30) hasMore.value = false;
 
+            // No "repostOf" filter here to include reposts
             q = query(baseCollection, where("authorId", "in", followingList.slice(0, 30)), orderBy("createdAt", "desc"), limit(10));
+        } else if (channelFilters.includes(filter)) {
+            q = query(baseCollection, where("repostOf", "==", null), where("channel", "==", filter), orderBy("score", "desc"), limit(10));
         } else {
             const orderByField = filter === 'viral' ? 'score' : 'createdAt';
-            q = query(baseCollection, orderBy(orderByField, "desc"), limit(10));
+            q = query(baseCollection, where("repostOf", "==", null), orderBy(orderByField, "desc"), limit(10));
         }
         
         if (q) {
@@ -163,10 +180,13 @@ const loadMorePosts = async () => {
             if (followingList.length === 0 || followingList.length > 30) {
                 hasMore.value = false; return;
             }
+            // No "repostOf" filter here
             q = query(baseCollection, where("authorId", "in", followingList), orderBy("createdAt", "desc"), startAfter(lastVisibleDoc.value), limit(10));
+        } else if (channelFilters.includes(activeFilter.value)) {
+            q = query(baseCollection, where("repostOf", "==", null), where("channel", "==", activeFilter.value), orderBy("score", "desc"), startAfter(lastVisibleDoc.value), limit(10));
         } else {
             const orderByField = activeFilter.value === 'viral' ? 'score' : 'createdAt';
-            q = query(baseCollection, orderBy(orderByField, "desc"), startAfter(lastVisibleDoc.value), limit(10));
+            q = query(baseCollection, where("repostOf", "==", null), orderBy(orderByField, "desc"), startAfter(lastVisibleDoc.value), limit(10));
         }
 
         const querySnapshot = await getDocs(q);
@@ -252,7 +272,7 @@ onUnmounted(() => {
     </div>
 
     <FilterModal 
-      v-if="isFilterModalOpen"
+      :show="isFilterModalOpen"
       :tabs="hiddenTabs"
       @close="isFilterModalOpen = false"
       @set-filter="setFilter"
@@ -262,7 +282,7 @@ onUnmounted(() => {
 
 <style scoped>
 .feed-container { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
-.sticky-header { position: sticky; top: 0; z-index: 50; background-color: rgba(26, 26, 26, 0.8); backdrop-filter: blur(5px); padding: 1rem 1.5rem; margin: 0 -1.5rem; }
+.sticky-header { position: sticky; top: 0; background-color: rgba(26, 26, 26, 0.8); backdrop-filter: blur(5px); padding: 1rem 1.5rem; margin: 0 -1.5rem; }
 .loading, .empty-state { text-align: center; padding: 2rem; color: #a0a0a0; }
 .sentinel { height: 20px; }
 .loading-more { display: flex; justify-content: center; padding: 1rem; }
